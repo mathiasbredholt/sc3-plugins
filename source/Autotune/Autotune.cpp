@@ -16,7 +16,7 @@ void Autotune_Ctor( Autotune *unit )
 {
   SETCALC(Autotune_next);
 
-  ZOUT0(0) = 0;
+  ClearUnitOutputs(unit, 1);
 }
 
 void Autotune_next( Autotune *unit, int inNumSamples )
@@ -32,7 +32,7 @@ void Autotune_next( Autotune *unit, int inNumSamples )
   }
 }
 
-PluginLoad(M2)
+PluginLoad(Autotune)
 {
   ft = inTable;
   DefineSimpleUnit(Autotune);
