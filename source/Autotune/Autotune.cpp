@@ -45,7 +45,7 @@ void Autotune_next(Autotune *unit, int inNumSamples)
 
 void Autotune_Dtor(Autotune *unit)
 {
-  RTFree(unit->mWorld, unit->buf)
+  RTFree(unit->mWorld, unit->buf);
 }
 
 PluginLoad(Autotune)
