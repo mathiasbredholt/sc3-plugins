@@ -11,7 +11,7 @@ extern "C"
 {
   void Autotune_next(Autotune *unit, int inNumSamples);
   void Autotune_Ctor(Autotune *unit);
-  void Autotune_Dtor(Autotune *unit);
+  // void Autotune_Dtor(Autotune *unit);
 }
 
 void Autotune_Ctor(Autotune *unit)
@@ -20,7 +20,7 @@ void Autotune_Ctor(Autotune *unit)
   // memset(unit->buf, 0, 20 * sizeof(float));
 
   SETCALC(Autotune_next);
-  ClearUnitOutputs(unit, 1);
+  Autotune_next(unit, 1);
 }
 
 void Autotune_next(Autotune *unit, int inNumSamples)
@@ -50,13 +50,13 @@ void Autotune_next(Autotune *unit, int inNumSamples)
   }
 }
 
-void Autotune_Dtor(Autotune *unit)
-{
-  // RTFree(unit->mWorld, unit->buf);
-}
+// void Autotune_Dtor(Autotune *unit)
+// {
+//   // RTFree(unit->mWorld, unit->buf);
+// }
 
 PluginLoad(Autotune)
 {
   ft = inTable;
-  DefineDtorUnit(Autotune);
+  DefineSimpleUnit(Autotune);
 }
