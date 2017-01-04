@@ -51,5 +51,5 @@ void Autotune_Dtor(Autotune *unit)
 PluginLoad(Autotune)
 {
   ft = inTable;
-  DefineSimpleUnit(Autotune);
+  DefineDtorUnit(Autotune);
 }
