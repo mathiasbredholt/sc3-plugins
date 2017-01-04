@@ -4,7 +4,7 @@ static InterfaceTable *ft;
 
 struct Autotune : public Unit
 {
-  //float *buf;
+  // float *buf;
 };
 
 extern "C"
@@ -16,8 +16,8 @@ extern "C"
 
 void Autotune_Ctor(Autotune *unit)
 {
-  //unit->buf = (float*) RTAlloc(unit->mWorld, 20 * sizeof(float));
-  //memset(unit->buf, 0, 20 * sizeof(float));
+  // unit->buf = (float*) RTAlloc(unit->mWorld, 20 * sizeof(float));
+  // memset(unit->buf, 0, 20 * sizeof(float));
 
   SETCALC(Autotune_next);
   ClearUnitOutputs(unit, 1);
@@ -27,7 +27,7 @@ void Autotune_next(Autotune *unit, int inNumSamples)
 {
   float *in = IN(0);
   float *out = OUT(0);
-  float *buf = unit->buf;
+  // float *buf = unit->buf;
 
   for (int i = 0; i < inNumSamples; ++i)
   {
@@ -48,7 +48,7 @@ void Autotune_next(Autotune *unit, int inNumSamples)
 
 void Autotune_Dtor(Autotune *unit)
 {
-  //RTFree(unit->mWorld, unit->buf);
+  // RTFree(unit->mWorld, unit->buf);
 }
 
 PluginLoad(Autotune)
