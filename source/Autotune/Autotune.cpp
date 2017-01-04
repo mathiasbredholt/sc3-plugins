@@ -8,8 +8,8 @@ struct Autotune : public Unit
 
 extern "C"
 {
-  void Autotune_Ctor(Autotune *unit);
   void Autotune_next(Autotune *unit, int inNumSamples);
+  void Autotune_Ctor(Autotune *unit);
 }
 
 void Autotune_Ctor( Autotune *unit )
