@@ -35,12 +35,12 @@ void Autotune_next(Autotune *unit, int inNumSamples)
   {
     tmp = 0;
 
-    for (int j = 0; j < 30; j++)
+    for (int j = 0; j < 10; j++)
     {
       if ((i - j) >= 0)
       {
         // unit->buf[j] = in[i - j];
-        tmp += 1/30 * in[i - j];
+        tmp += 1/10.0 * in[i - j];
       }
     }
 
