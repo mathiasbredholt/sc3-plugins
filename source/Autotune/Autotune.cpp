@@ -16,7 +16,7 @@ extern "C"
 
 void Autotune_Ctor(Autotune *unit)
 {
-  memset(unit->buf, 0, sizeof(float) * 5)
+  memset(unit->buf, 0, sizeof(float) * 5);
 
   SETCALC(Autotune_next);
   ClearUnitOutputs(unit, 1);
