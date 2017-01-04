@@ -24,6 +24,8 @@ void Autotune_next( Autotune *unit, int inNumSamples )
   float *in = IN(0);
   float *out = OUT(0);
 
+  float val;
+
   for ( int i = 0; i < inNumSamples; ++i) {
     val = in[i];
     out[i] = val;
