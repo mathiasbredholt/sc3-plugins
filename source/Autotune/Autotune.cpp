@@ -39,7 +39,7 @@ void Autotune_next(Autotune *unit, int inNumSamples)
       }
     }
 
-    out[i] = val + 0.2 * buf[0] + 0.2 * buf[1] + 0.2 * buf[2] + 0.2 * buf[3] + 0.2 * buf[4];
+    out[i] = 0.2 * buf[0] + 0.2 * buf[1] + 0.2 * buf[2] + 0.2 * buf[3] + 0.2 * buf[4];
   }
 }
 
