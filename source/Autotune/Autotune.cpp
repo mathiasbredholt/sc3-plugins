@@ -11,7 +11,7 @@ extern "C"
 {
   void Autotune_next(Autotune *unit, int inNumSamples);
   void Autotune_Ctor(Autotune *unit);
-  void Autotune_Dtor(Autotune *unit);
+  void Autotune_Dtor(Autotune *unit)
 }
 
 void Autotune_Ctor(Autotune *unit)
