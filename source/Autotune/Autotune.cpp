@@ -29,18 +29,22 @@ void Autotune_next(Autotune *unit, int inNumSamples)
   float *out = OUT(0);
   // float *buf = unit->buf;
 
+  float tmp;
+
   for (int i = 0; i < inNumSamples; ++i)
   {
-    out[i] = 0;
+    tmp = 0;
 
     for (int j = 0; j < 30; j++)
     {
       if ((i - j) >= 0)
       {
         // unit->buf[j] = in[i - j];
-        out[i] += 0.2 * in[i - j];
+        tmp += 1/30 * in[i - j];
       }
     }
+
+    out[i] = tmp;
 
     // out[i] = 0.2 * buf[0] + 0.2 * buf[1] + 0.2 * buf[2] + 0.2 * buf[3] + 0.2 * buf[4];
   }
