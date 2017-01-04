@@ -26,6 +26,7 @@ void Autotune_next(Autotune *unit, int inNumSamples)
 {
   float *in = IN(0);
   float *out = OUT(0);
+  float *buf = unit->buf;
 
   for (int i = 0; i < inNumSamples; ++i)
   {
