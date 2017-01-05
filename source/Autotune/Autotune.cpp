@@ -1,21 +1,31 @@
 #include "SC_PlugIn.h"
+#include <fftw3.h>
+
+#define FFT_SIZE 64
 
 static InterfaceTable *ft;
 
 struct Autotune : public Unit
 {
-  // float *buf;
+  fftw_complex *fft_in, *fft_out;
+  fftw_plan p;
 };
 
 extern "C"
 {
   void Autotune_next(Autotune *unit, int inNumSamples);
   void Autotune_Ctor(Autotune *unit);
-  // void Autotune_Dtor(Autotune *unit);
+  void Autotune_Dtor(Autotune *unit);
 }
 
 void Autotune_Ctor(Autotune *unit)
 {
+
+
+  unit->fft_in = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N);
+  unit->fft_out = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N);
+  unit->p = fftw_plan_dft_r2c_1d(FFT_SIZE, fft_in, fft_out, FFTW_FORWARD, FFTW_ESTIMATE);
+
   // unit->buf = (float*) RTAlloc(unit->mWorld, 20 * sizeof(float));
   // memset(unit->buf, 0, 20 * sizeof(float));
 
@@ -29,34 +39,42 @@ void Autotune_next(Autotune *unit, int inNumSamples)
   float *out = OUT(0);
   // float *buf = unit->buf;
 
-  float tmp;
 
-  for (int i = 0; i < inNumSamples; ++i)
-  {
-    tmp = 0;
+  // 10th order moving average
+  // float tmp;
 
-    for (int j = 0; j < 10; j++)
-    {
-      if ((i - j) >= 0)
-      {
-        // unit->buf[j] = in[i - j];
-        tmp += 1/10.0 * in[i - j];
-      }
-    }
+  // for (int i = 0; i < inNumSamples; ++i)
+  // {
+  //   tmp = 0;
 
-    out[i] = tmp;
+  //   for (int j = 0; j < 10; j++)
+  //   {
+  //     if ((i - j) >= 0)
+  //     {
+  //       // unit->buf[j] = in[i - j];
+  //       tmp += 1/10.0 * in[i - j];
+  //     }
+  //   }
 
-    // out[i] = 0.2 * buf[0] + 0.2 * buf[1] + 0.2 * buf[2] + 0.2 * buf[3] + 0.2 * buf[4];
-  }
+  //   out[i] = tmp;
+
+  // }
+
+  unit->fft_in = in;
+  fftw_execute(unit->p);
+  out = unit->fft_out;
 }
 
-// void Autotune_Dtor(Autotune *unit)
-// {
-//   // RTFree(unit->mWorld, unit->buf);
-// }
+void Autotune_Dtor(Autotune *unit)
+{
+  // RTFree(unit->mWorld, unit->buf);
+  fftw_destroy_plan(unit->p);
+  fftw_free(unit->fft_in);
+  fftw_free(unit->fft_out);
+}
 
 PluginLoad(Autotune)
 {
   ft = inTable;
-  DefineSimpleUnit(Autotune);
+  DefineDtorUnit(Autotune);
 }
