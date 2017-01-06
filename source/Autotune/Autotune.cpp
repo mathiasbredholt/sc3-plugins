@@ -4,9 +4,10 @@
 #include <complex>
 
 
-#define FFT_SIZE 2048
-#define WIN_SIZE 1024
-#define HOP_SIZE 512
+#define FFT_SIZE 4096
+#define FFT_COMPLEX_SIZE static_cast<int>(FFT_SIZE/2 + 1)
+#define WIN_SIZE 2048
+#define HOP_SIZE 1024
 #define SHUNT_SIZE (FFT_SIZE - HOP_SIZE)
 #define PI 3.1415926535898f
 #define TWOPI 6.28318530717952646f
@@ -15,7 +16,7 @@
 #define SINE_WINDOW 1
 #define CEPSTRUM_LOWPASS 2
 
-#define CEPSTRUM_CUTOFF 100
+#define CEPSTRUM_CUTOFF static_cast<int>(0.05 * 1024)
 
 static InterfaceTable *ft;
 
@@ -63,28 +64,35 @@ void do_zeropad(float *in, int old_length, int new_length) {
   memset(in + old_length, 0, (new_length - old_length) * sizeof(float));
 }
 
-void create_pulse_train(float *in, float freq, float sampleRate, int N) {
-  int period = static_cast<int>(sampleRate/freq);
-  int repeats = static_cast<int>(N/period);
+int create_pulse_train(float *in, float freq, float sampleRate, int N, int current_offset) {
+  int period = static_cast<int>(sampleRate/freq + 0.5);
+  int repeats = static_cast<int>((N - current_offset)/period);
+  int new_offset = (repeats + 1) * period + current_offset - N;
+
   memset(in, 0, N * sizeof(float));
-  in[0] = 1.0;
-  for (int i = 1; i < period; ++i) {
+  
+  in[current_offset] = 1.0;
+  for (int i = current_offset + 1; i - current_offset < period; ++i) {
     in[i] = 0.0;
   }
 
   for (int i = 0; i < repeats; ++i) {
     memcpy(in + i * period, in, period * sizeof(float));
   }
+
+  return new_offset;
 }
 
 struct Autotune : public Unit {
   float *win;
-  float *in_buffer, *out_buffer, *fft_real;
+  float *in_buffer, *out_buffer, *fft_real, *tmp_buffer;
   std::complex<float> *fft_complex;
   fftwf_plan fft, ifft;
   float m_fbufnum;
   SndBuf *m_buf;
   int pos;
+  int oscillator_offset;
+  float freq;
 };
 
 extern "C" {
@@ -100,13 +108,13 @@ void Autotune_Ctor(Autotune *unit) {
 
   unit->m_fbufnum = -1e-9;
 
-  create_window(unit->win, SINE_WINDOW, FFT_SIZE);
-
   unit->in_buffer = static_cast<float*>(
     RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
   unit->out_buffer = static_cast<float*>(
     RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
 
+  unit->tmp_buffer = static_cast<float*>(
+    RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
 
   unit->fft_real = static_cast<float*>(
     RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
@@ -116,7 +124,7 @@ void Autotune_Ctor(Autotune *unit) {
   memset(unit->in_buffer, 0, FFT_SIZE * sizeof(float));
   memset(unit->out_buffer, 0, FFT_SIZE * sizeof(float));
   memset(unit->fft_real, 0, FFT_SIZE * sizeof(float));
-  memset(unit->fft_complex, 0, FFT_SIZE * sizeof(std::complex<float>));
+  memset(unit->fft_complex, 0, FFT_COMPLEX_SIZE * sizeof(std::complex<float>));
 
   unit->fft = fftwf_plan_dft_r2c_1d(
     FFT_SIZE, unit->fft_real, reinterpret_cast<fftwf_complex*>(unit->fft_complex), FFTW_ESTIMATE);
@@ -124,6 +132,7 @@ void Autotune_Ctor(Autotune *unit) {
     FFT_SIZE, reinterpret_cast<fftwf_complex*>(unit->fft_complex), unit->fft_real, FFTW_ESTIMATE);
 
   unit->pos = 0;
+  unit->oscillator_offset = 0;
 
   SETCALC(Autotune_next);
   Autotune_next(unit, 1);
@@ -134,10 +143,14 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
   float *out = OUT(0);
   float *in_buffer = unit->in_buffer;
   float *out_buffer = unit->out_buffer;
+  float *tmp_buffer = unit->tmp_buffer;
   float *fft_real = unit->fft_real;
   float *win = unit->win;
+  float freq = IN0(2);
   std::complex<float> *fft_complex = unit->fft_complex;
   int pos = unit->pos;
+  RGen &rgen = *unit->mParent->mRGen;
+  const std::complex<float> im(0.0,1.0);   
 
   GET_BUF
 
@@ -149,6 +162,7 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
     // FFT
     memcpy(fft_real, in_buffer, WIN_SIZE * sizeof(float));
+    create_window(win, HANN_WINDOW, WIN_SIZE);
     do_windowing(fft_real, win, WIN_SIZE);
     fftwf_execute(unit->fft);
 
@@ -156,7 +170,7 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
     memmove(in_buffer, in_buffer + HOP_SIZE, SHUNT_SIZE * sizeof(float));
 
     // Create cepstrum
-    do_log_abs(fft_complex, FFT_SIZE);
+    do_log_abs(fft_complex, FFT_COMPLEX_SIZE);
     fftwf_execute(unit->ifft);
 
     // Window cepstrum to estimate spectral envelope
@@ -165,29 +179,33 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
     // Go back to frequency domain to prepare for filtering
     fftwf_execute(unit->fft);
-    do_real_exp(out_buffer, fft_complex, FFT_SIZE);
+    do_real_exp(tmp_buffer, fft_complex, FFT_COMPLEX_SIZE);
+
+    for (int i = 0; i < bufFrames; ++i) {
+      bufData[i] = out_buffer[i];
+    }
 
     // Create excitation signal
-    create_pulse_train(fft_real, 200, SAMPLERATE, WIN_SIZE);
+    unit->oscillator_offset = create_pulse_train(fft_real, freq, SAMPLERATE, WIN_SIZE, unit->oscillator_offset);
     // Zeropad to match conditions for convolution
     do_zeropad(fft_real, WIN_SIZE, FFT_SIZE);
-    fftwf_execute(unit->fft);
+    fftwf_execute(unit->fft);    
 
     // Circular convolution
-    for (int i = 0; i < FFT_SIZE; ++i) {
-      fft_complex[i] *= out_buffer[i];
+    for (int k = 0; k < FFT_COMPLEX_SIZE; ++k) {
+      fft_complex[k] *= tmp_buffer[k] * std::exp(im*static_cast<std::complex<float>>(rgen.sum3rand(2.0)));
     }
 
     // IFFT
     fftwf_execute(unit->ifft);
-    create_window(win, SINE_WINDOW, FFT_SIZE);
-    do_windowing(fft_real, win, FFT_SIZE, 0.5/FFT_SIZE);
+    create_window(win, HANN_WINDOW, FFT_SIZE);
+    do_windowing(fft_real, win, FFT_SIZE, 1.0/FFT_SIZE);
 
-    for (int i = 0; i < bufFrames; ++i) {
-      bufData[i] = fft_real[i];
-    }
 
+    // !!! SILENCE !!!
     // memset(fft_real, 0, FFT_SIZE * sizeof(float));
+    
+
     memmove(out_buffer, out_buffer + HOP_SIZE, SHUNT_SIZE * sizeof(float));
 
     for (int i = 0; i < FFT_SIZE; ++i) {
@@ -211,6 +229,7 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
   // }
 
   unit->pos = pos;
+  unit->freq = freq;
 }
 
 void Autotune_Dtor(Autotune *unit) {
@@ -220,6 +239,7 @@ void Autotune_Dtor(Autotune *unit) {
   RTFree(unit->mWorld, unit->win);
   RTFree(unit->mWorld, unit->in_buffer);
   RTFree(unit->mWorld, unit->out_buffer);
+  RTFree(unit->mWorld, unit->tmp_buffer);
   RTFree(unit->mWorld, unit->fft_real);
   RTFree(unit->mWorld, unit->fft_complex);
 }
