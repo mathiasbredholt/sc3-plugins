@@ -1,5 +1,5 @@
 Autotune : UGen {
-	 *ar { arg in, mul = 1.0, add = 0.0;
-	 ^this.multiNew('audio', in).madd(mul, add)
+	 *ar { arg bufnum, in, mul = 1.0, add = 0.0;
+	 ^this.multiNew('audio', bufnum, in).madd(mul, add)
 	 }
 }
