@@ -198,6 +198,12 @@ set (AutotuneLibs ${FFTW3F_LIBRARY})
 BUILD_PLUGIN(Autotune "${AutotuneSources}"
              "${AutotuneLibs}" "Autotune")
 
+include_directories(${FFTW3F_INCLUDE_DIR})
+set_property(TARGET Autotune APPEND PROPERTY COMPILE_DEFINITIONS SC_FFT_FFTW)
+if (SUPERNOVA)
+    set_property(TARGET Autotune_supernova APPEND PROPERTY COMPILE_DEFINITIONS SC_FFT_FFTW)
+endif()
+
 # AuditoryModeling
 file(GLOB AuditoryModelingSources AuditoryModeling/*cpp)
 
