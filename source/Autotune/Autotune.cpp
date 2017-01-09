@@ -20,6 +20,9 @@
 
 static InterfaceTable *ft;
 
+typedef std::complex<float> cfloat;
+const cfloat im(0.0,1.0);
+
 void create_window(float *win, int wintype, int N) {
   if (wintype == HANN_WINDOW) {
     for (int i = 0; i < N; ++i) {
@@ -48,13 +51,13 @@ void do_windowing(float *in, float *win, int N, float scale = 1.0) {
   }
 }
 
-void do_log_abs(std::complex<float> *in, int N) {
+void do_log_abs(cfloat *in, int N) {
   for (int i = 0; i < N; ++i) {
     in[i] = log(std::abs(in[i]) + 1e-6);
   }
 }
 
-void do_real_exp(float *out, std::complex<float> *in, int N) {
+void do_real_exp(float *out, cfloat *in, int N) {
   for (int i = 0; i < N; ++i) {
     out[i] = exp(std::real(in[i]));
   }
@@ -62,6 +65,19 @@ void do_real_exp(float *out, std::complex<float> *in, int N) {
 
 void do_zeropad(float *in, int old_length, int new_length) {
   memset(in + old_length, 0, (new_length - old_length) * sizeof(float));
+}
+
+float do_autocorrelation(cfloat *in, float sampleRate, int N) {
+  float highest_peak = -1e9;
+  int index = 0;
+  for (int i = 0; i < N; ++i) {
+    float corr = static_cast<float>(in[i] * std::conj(in[i]));
+    if (corr > highest_peak){
+      highest_peak = corr;
+      index = i;
+    }
+  }
+  return index * sampleRate/N;
 }
 
 int create_pulse_train(float *in, float freq, float sampleRate, int N, int current_offset) {
@@ -86,7 +102,7 @@ int create_pulse_train(float *in, float freq, float sampleRate, int N, int curre
 struct Autotune : public Unit {
   float *win;
   float *in_buffer, *out_buffer, *fft_real, *tmp_buffer;
-  std::complex<float> *fft_complex;
+  cfloat *fft_complex;
   fftwf_plan fft, ifft;
   float m_fbufnum;
   SndBuf *m_buf;
@@ -118,13 +134,13 @@ void Autotune_Ctor(Autotune *unit) {
 
   unit->fft_real = static_cast<float*>(
     RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
-  unit->fft_complex = static_cast<std::complex<float>*>(
-    RTAlloc(unit->mWorld, FFT_SIZE * sizeof(std::complex<float>)));
+  unit->fft_complex = static_cast<cfloat*>(
+    RTAlloc(unit->mWorld, FFT_SIZE * sizeof(cfloat)));
 
   memset(unit->in_buffer, 0, FFT_SIZE * sizeof(float));
   memset(unit->out_buffer, 0, FFT_SIZE * sizeof(float));
   memset(unit->fft_real, 0, FFT_SIZE * sizeof(float));
-  memset(unit->fft_complex, 0, FFT_COMPLEX_SIZE * sizeof(std::complex<float>));
+  memset(unit->fft_complex, 0, FFT_COMPLEX_SIZE * sizeof(cfloat));
 
   unit->fft = fftwf_plan_dft_r2c_1d(
     FFT_SIZE, unit->fft_real, reinterpret_cast<fftwf_complex*>(unit->fft_complex), FFTW_ESTIMATE);
@@ -147,10 +163,10 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
   float *fft_real = unit->fft_real;
   float *win = unit->win;
   float freq = IN0(2);
-  std::complex<float> *fft_complex = unit->fft_complex;
+  cfloat *fft_complex = unit->fft_complex;
   int pos = unit->pos;
+  float fund_freq = 0;
   RGen &rgen = *unit->mParent->mRGen;
-  const std::complex<float> im(0.0,1.0);   
 
   GET_BUF
 
@@ -165,6 +181,11 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
     create_window(win, HANN_WINDOW, WIN_SIZE);
     do_windowing(fft_real, win, WIN_SIZE);
     fftwf_execute(unit->fft);
+
+    // Pitch tracking
+    fund_freq = do_autocorrelation(fft_complex, SAMPLERATE, FFT_COMPLEX_SIZE);
+    printf("%f\n", fund_freq);
+
 
     // Move the last part to the beginning
     memmove(in_buffer, in_buffer + HOP_SIZE, SHUNT_SIZE * sizeof(float));
@@ -193,7 +214,7 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
     // Circular convolution
     for (int k = 0; k < FFT_COMPLEX_SIZE; ++k) {
-      fft_complex[k] *= tmp_buffer[k] * std::exp(im*static_cast<std::complex<float>>(rgen.sum3rand(2.0)));
+      fft_complex[k] *= tmp_buffer[k] * std::exp(im*static_cast<cfloat>(rgen.sum3rand(2.0)));
     }
 
     // IFFT
