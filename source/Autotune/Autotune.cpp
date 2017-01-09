@@ -71,7 +71,7 @@ float do_autocorrelation(cfloat *in, float sampleRate, int N) {
   float highest_peak = -1e9;
   int index = 0;
   for (int i = 0; i < N; ++i) {
-    float corr = static_cast<float>(in[i] * std::conj(in[i]));
+    float corr = std::real(in[i] * std::conj(in[i]));
     if (corr > highest_peak){
       highest_peak = corr;
       index = i;
