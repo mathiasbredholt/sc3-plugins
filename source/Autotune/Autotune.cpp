@@ -399,7 +399,7 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
     // do_pitch_shift(fft_complex, spectrum, tmp_buffer, new_freq/fund_freq, FFT_COMPLEX_SIZE);
 
-    psola_analysis();
+    psola_analysis(); 
 
     // memcpy(fft_complex, spectrum, FFT_COMPLEX_SIZE * sizeof(cfloat));
     // IFFT
