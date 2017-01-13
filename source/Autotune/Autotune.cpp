@@ -1,4 +1,5 @@
 // Copyright 2017 M. Bredholt and M. Kirkegaard
+// requires libsamplerate
 #include "SC_PlugIn.h"
 #include <samplerate.h>
 #include <fftw3.h>
