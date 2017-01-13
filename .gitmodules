@@ -4,3 +4,9 @@
 [submodule "external_libraries/stk"]
 	path = external_libraries/stk
 	url = https://github.com/thestk/stk.git
+[submodule "source/Autotune/externals/libsamplerate"]
+	path = source/Autotune/externals/libsamplerate
+	url = https://github.com/erikd/libsamplerate.git
+[submodule "external_libraries/libsamplerate"]
+	path = external_libraries/libsamplerate
+	url = https://github.com/erikd/libsamplerate.git

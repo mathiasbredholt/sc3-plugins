@@ -12,12 +12,14 @@
 #define TWOPI 6.28318530717952646f
 #define EXPECTED_PHASE_DIFF (TWOPI * HOP_SIZE/WIN_SIZE)
 #define CORRELATION_CONSTANT 0.8
+#define MINIMUM_FREQUENCY 70
+#define MAXIMUM_FREQUENCY 1024
 
 #define HANN_WINDOW 0
 #define SINE_WINDOW 1
 #define CEPSTRUM_LOWPASS 2
 
-#define CEPSTRUM_CUTOFF static_cast<int>(0.1 * WIN_SIZE)
+#define CEPSTRUM_CUTOFF static_cast<int>(0.05 * WIN_SIZE)
 
 static InterfaceTable *ft;
 
@@ -31,32 +33,26 @@ const float freq_grid[] = {
   261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88
 };
 
-void create_window(float *win, int wintype, int N) {
+void do_windowing(float *in, int wintype, int N, float scale = 1.0) {
   if (wintype == HANN_WINDOW) {
     // Hann window squared
     for (int i = 0; i <   N; ++i) {
-      win[i] = pow((0.5 - 0.5 * cos(TWOPI*i/(N-1))), 2);
+      in[i] *= pow((0.5 - 0.5 * cos(TWOPI*i/(N-1))), 2) * scale;
     }
   } else if (wintype == SINE_WINDOW) {
     for (int i = 0; i < N; ++i) {
-      win[i] = sin(TWOPI*i/N);
+      in[i] *= sin(TWOPI*i/N) * scale;
     }
   } else if (wintype == CEPSTRUM_LOWPASS) {
     for (int i = 0; i < N; ++i) {
       if (i == 0 || i == CEPSTRUM_CUTOFF) {
-        win[i] = 1.0;
+        in[i] *= 1.0 * scale;
       } else if (1 <= i && i < CEPSTRUM_CUTOFF) {
-        win[i] = 2.0;
+        in[i] *= 2.0 * scale;
       } else if (CEPSTRUM_CUTOFF < i && i <= N - 1) {
-        win[i] = 0.0;
+        in[i] *= 0.0 * scale;
       }
     }
-  }
-}
-
-void do_windowing(float *in, float *win, int N, float scale = 1.0) {
-  for (int i = 0; i < N; ++i) {
-    in[i] *= win[i] * scale;
   }
 }
 
@@ -140,6 +136,11 @@ void do_peak_picking(float *sdf, float sample_rate, int N, float *freq, float *c
   int peaks[64];
   int local_max;
   int global_max;
+  float top_x;
+  float top_y;
+
+  int x1, x2, x3;
+  float y1, y2, y3;
 
   while (n < 64 && i < (N + 1) / 2 - 1) {
     // Find positively sloped zero-crossing
@@ -190,15 +191,29 @@ void do_peak_picking(float *sdf, float sample_rate, int N, float *freq, float *c
     }
   }
 
-  *corr = sdf[peaks[i]];
-  if (*corr > 0.5)
-    *freq = sample_rate / static_cast<float>(peaks[i]);
+  x1 = peaks[i] - 1;
+  x2 = peaks[i];
+  x3 = peaks[i] + 1;
+  y1 = sdf[x1];
+  y2 = sdf[x2];
+  y3 = sdf[x3];
+
+  top_x = ((2.0 * y1 - 4.0 * y2 + 2.0 * y3) * x2 + y1 - y3) / (2.0 *  y1 - 4.0 * y2 + 2.0 * y3);
+  top_y = (- pow(y1, 2.0) + (8.0 * y2 + 2.0 * y3) * y1 - 16.0 * pow((y2 - 1.0/4.0 * y3), 2.0))/(8.0 * y1 - 16.0 * y2 + 8.0 * y3);
+
+
+  *freq = sample_rate/top_x;
+  *corr = top_y;
+
+  // *corr = sdf[peaks[i]];
+  // if (*corr > 0.5)
+    // *freq = sample_rate / static_cast<float>(peaks[i]);
 }
 
 float closest_frequency(float freq) {
   int k = 0;
   float diff = 1e6;
-  for (int i = 0; i < 5; ++i) {
+  for (int i = 0; i < 14; ++i) {
     if (abs(freq - freq_grid[i]) < diff) {
       diff = abs(freq - freq_grid[i]);
       k = i;
@@ -241,12 +256,75 @@ void do_pitch_shift(cfloat *new_spectrum, cfloat *orig_spectrum,
   }
 }
 
-void psola_analysis() {
+void psola(float *out_buffer, float *in_buffer, float *tmp_buffer, float *pitch_marks, float mod_rate, float sample_rate, int N) {
+  int win_min = 2 * static_cast<int>(sample_rate/MINIMUM_FREQUENCY);
+  int period = static_cast<int>(sample_rate/fund_freq);
+  float offset = 0;
+  int offset_idx = 0;
+  int oa_idx = 0;
+  int i = 1;
+  mod_rate = fmin(fmax(mod_rate, 0.5), 1.5);
 
+  memset(pitch_marks, 0, FFT_SIZE * sizeof(float));
+  memset(out_buffer, 0, FFT_SIZE * sizeof(float));
+  memset(tmp_buffer, 0, FFT_SIZE * sizeof(float));
+
+  pitch_marks[0] = period;
+
+  while (pitch_marks[i - 1] < N - win_min) {
+    period = static_cast<int>(sample_rate/fund_freq);
+    i++;
+    pitch_marks[i] = period + pitch_marks[i - 1];
+  }
+
+  while (offset_idx < i - 2) {
+    int period;
+    offset += mod_rate;
+    offset_idx = static_cast<int>(ceil(offset));
+    period = static_cast<int>(pitch_marks[offset_idx + 1] - pitch_marks[offset_idx]);
+    oa_idx += period;
+
+    memcpy(tmp_buffer, in_buffer + offset_idx, 2 * period * sizeof(float));
+    do_windowing(tmp_buffer, HANN_WINDOW, 2*period);
+
+    for (int i = 0; i < 2*period; ++i) {
+      out_buffer[oa_idx - period + i] += tmp_buffer[i]; 
+    }
+  }
 }
 
-void psola_pitch_shift() {
+void antialias(float *out_buffer, float *in_buffer, int N) {
+  float B[] = { 0.2929, 0.5858, 0.2929 };
+  float A[] = { 1, -2.6368e-16, 0.1716 };
+  memset(out_buffer, 0, N * sizeof(float));
+  for (int i = 0; i < N; ++i) {
+    if (i == 0) {
+      out_buffer[i] = B[0] * in_buffer[i] 
+      - A[0] * out_buffer[i];
+    } else if (i == 1) {
+      out_buffer[i] = B[1] * in_buffer[i - 1] + B[0] * in_buffer[i]
+      - (A[1] * out_buffer[i - 1] + A[0] * out_buffer[i]);
+    } else {
+      out_buffer[i] = B[2] * in_buffer[i - 2] + B[1] * in_buffer[i - 1] + B[0] * in_buffer[i] 
+      - (A[2] * out_buffer[i - 2] + A[1] * out_buffer[i - 1] + A[0] * out_buffer[i]);
+    }
 
+  }
+}
+
+void resample(float *out_buffer, float *in_buffer, float mod_rate, int N) {
+  int block_index = 0;
+  float M = mod_rate;
+  float L = 1/mod_rate;
+
+  for (int i = 0; i < N/64; ++i) {
+    // Interpolation
+    for (int i = 0; i < N; ++i) {
+
+    }
+  }
+
+  memset(out_buffer, 0, N * sizeof(float));
 }
 
 struct Autotune : public Unit {
@@ -269,10 +347,6 @@ extern "C" {
 }
 
 void Autotune_Ctor(Autotune *unit) {
-  // Create window function
-  unit->win = static_cast<float*>(
-    RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
-
   unit->m_fbufnum = -1e-9;
 
   unit->in_buffer = static_cast<float*>(
@@ -326,14 +400,13 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
   float *tmp_buffer = unit->tmp_buffer;
   float *phase_buffer = unit->phase_buffer;
   float *fft_real = unit->fft_real;
-  float *win = unit->win;
-  float freq = IN0(2);
   cfloat *fft_complex = unit->fft_complex;
   cfloat *spectrum = unit->spectrum;
   int pos = unit->pos;
   float fund_freq = unit->fund_freq;
+  float mod_rate = 1.0;
   float new_freq = 1;
-  float corr = 0;
+  float corr = 0.0;
 
   RGen &rgen = *unit->mParent->mRGen;
 
@@ -347,16 +420,15 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
     // FFT
     memcpy(fft_real, in_buffer, WIN_SIZE * sizeof(float));
-    create_window(win, HANN_WINDOW, WIN_SIZE);
-    do_windowing(fft_real, win, WIN_SIZE);
+    do_windowing(fft_real, HANN_WINDOW, WIN_SIZE);
     fftwf_execute(unit->fft);
 
-    // Save spectrum for later
-    memcpy(spectrum, fft_complex, FFT_COMPLEX_SIZE * sizeof(cfloat));
+    // // Save spectrum for later
+    // memcpy(spectrum, fft_complex, FFT_COMPLEX_SIZE * sizeof(cfloat));
 
-    // ++++ Pitch tracking ++++
-    // fund_freq = do_autocorrelation(fft_complex, phase_buffer,
-                                   // sample_rate, FFT_COMPLEX_SIZE);
+    // // ++++ Pitch tracking ++++
+    // // fund_freq = do_autocorrelation(fft_complex, phase_buffer,
+    //                                // sample_rate, FFT_COMPLEX_SIZE);
 
     calc_power_spectral_density(fft_complex, FFT_COMPLEX_SIZE);
     fftwf_execute(unit->ifft);
@@ -364,49 +436,59 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
     do_peak_picking(fft_real, SAMPLERATE, WIN_SIZE, &fund_freq, &corr);
 
     new_freq = closest_frequency(fund_freq);
+
+    // printf("%f\n", fund_freq);
     // printf("%f\n", new_freq/fund_freq);
 
     // +++++++++++++++++++++++
 
+    mod_rate = fund_freq/new_freq;
+    // psola(fft_real, in_buffer, tmp_buffer, phase_buffer, mod_rate, SAMPLERATE, WIN_SIZE);
+    antialias(tmp_buffer, in_buffer, WIN_SIZE);
+    resample(fft_real, tmp_buffer, mod_rate, WIN_SIZE);
+    // memcpy(fft_real, tmp_buffer, WIN_SIZE * sizeof(float));
+    // do_windowing(fft_real, HANN_WINDOW, WIN_SIZE, 1.0);
+
     // ++++ Spectral envelope estimation ++++
 
     // Create cepstrum
-    memcpy(fft_complex, spectrum, FFT_COMPLEX_SIZE * sizeof(cfloat));
-    do_log_abs(fft_complex, FFT_COMPLEX_SIZE);
-    fftwf_execute(unit->ifft);
+    // memcpy(fft_complex, spectrum, FFT_COMPLEX_SIZE * sizeof(cfloat));
+    // do_log_abs(fft_complex, FFT_COMPLEX_SIZE);
+    // fftwf_execute(unit->ifft);
 
-    // Window cepstrum to estimate spectral envelope
-    create_window(win, CEPSTRUM_LOWPASS, FFT_SIZE);
-    do_windowing(fft_real, win, FFT_SIZE, 1.0/FFT_SIZE);
+    // // Window cepstrum to estimate spectral envelope
+    // do_windowing(fft_real, CEPSTRUM_LOWPASS, FFT_SIZE, 1.0/FFT_SIZE);
 
-    // Go back to frequency domain to prepare for filtering
-    fftwf_execute(unit->fft);
-    do_real_exp(tmp_buffer, fft_complex, FFT_COMPLEX_SIZE);
+    // // Go back to frequency domain to prepare for filtering
+    // fftwf_execute(unit->fft);
+    // do_real_exp(tmp_buffer, fft_complex, FFT_COMPLEX_SIZE);
     // // +++++++++++++++++++++++++++++++++++++++
+
 
 
     // // Create excitation signal
     // unit->oscillator_offset = create_pulse_train(fft_real, new_freq, SAMPLERATE,
     // WIN_SIZE, unit->oscillator_offset);
+
+    // memcpy(bufData, fft_real, bufFrames * sizeof(float));
+
     // // Zeropad to match conditions for convolution
     // do_zeropad(fft_real, WIN_SIZE, FFT_SIZE);
     // fftwf_execute(unit->fft);
     // // Circular convolution
     // for (int k = 0; k < FFT_COMPLEX_SIZE; ++k) {
-    //   fft_complex[k] *= tmp_buffer[k];
-    //   // fft_complex[k] *= tmp_buffer[k] * std::exp(im*static_cast<cfloat>(rgen.sum3rand(2.0)));
-    // }
+    //   
 
-    // do_pitch_shift(fft_complex, spectrum, tmp_buffer, new_freq/fund_freq, FFT_COMPLEX_SIZE);
+    // fft_complex[k] *= tmp_buffer[k];
+    // //   // fft_complex[k] *= tmp_buffer[k] * std::exp(im*static_cast<cfloat>(rgen.sum3rand(2.0)));
+    // // }
 
-    psola_analysis(); 
+    // // do_pitch_shift(fft_complex, spectrum, tmp_buffer, new_freq/fund_freq, FFT_COMPLEX_SIZE);
 
     // memcpy(fft_complex, spectrum, FFT_COMPLEX_SIZE * sizeof(cfloat));
     // IFFT
-    fftwf_execute(unit->ifft);
-    create_window(win, HANN_WINDOW, FFT_SIZE);
-    do_windowing(fft_real, win, FFT_SIZE, 1.0/FFT_SIZE);
-
+    // fftwf_execute(unit->ifft);
+    // do_windowing(fft_real, HANN_WINDOW, FFT_SIZE, 1.0/FFT_SIZE);
 
     // !!! SILENCE !!!
     // memset(fft_real, 0, FFT_SIZE * sizeof(float));
