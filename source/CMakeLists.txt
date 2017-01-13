@@ -200,7 +200,7 @@ if (!LIBSAMPLERATE_FOUND)
     message(SEND_ERROR "Cannot find libsamplerate")
 endif()
 
-set (AutotuneLibs "${FFTW3F_LIBRARY};${LIBSAMPLERATE_LIBRARY}")
+set (AutotuneLibs "${FFTW3F_LIBRARY};${LIBSAMPLERATE_LIBRARIES}")
 
 
 BUILD_PLUGIN(Autotune "${AutotuneSources}"

@@ -8,7 +8,7 @@
 #define FFT_SIZE 4096
 #define FFT_COMPLEX_SIZE static_cast<int>(FFT_SIZE/2 + 1)
 #define WIN_SIZE 2048
-#define HOP_SIZE 512
+#define HOP_SIZE 256
 #define SHUNT_SIZE (FFT_SIZE - HOP_SIZE)
 #define PI 3.1415926535898f
 #define TWOPI 6.28318530717952646f
@@ -31,19 +31,20 @@ typedef std::complex<float> cfloat;
 const cfloat im(0.0, 1.0);
 
 const float freq_grid[] = {
-  130.81, 146.83, 164.81, 174.61, 196.00, 220.00, 246.94,
-  261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88
+  130.81, 155.56, 174.61, 196.00, 233.08,
+  261.63, 311.13, 349.23, 392.00, 466.16
 };
 
 void do_windowing(float *in, int wintype, int N, float scale = 1.0) {
   if (wintype == HANN_WINDOW) {
     // Hann window squared
     for (int i = 0; i <   N; ++i) {
-      in[i] *= pow((0.5 - 0.5 * cos(TWOPI*i/(N-1))), 2) * scale;
+      // in[i] *= pow((0.5 - 0.5 * cos(TWOPI * i / (N - 1))), 2) * scale;
+      in[i] *= (0.5 - 0.5 * cos(TWOPI * i / (N - 1))) * scale;
     }
   } else if (wintype == SINE_WINDOW) {
     for (int i = 0; i < N; ++i) {
-      in[i] *= sin(TWOPI*i/N) * scale;
+      in[i] *= sin(TWOPI * i / N) * scale;
     }
   } else if (wintype == CEPSTRUM_LOWPASS) {
     for (int i = 0; i < N; ++i) {
@@ -119,14 +120,14 @@ void calc_power_spectral_density(cfloat *spectrum, int N) {
   }
 }
 
-void calc_square_difference_function(float *autocorrelation, 
+void calc_square_difference_function(float *autocorrelation,
                                      float *in_buffer, int N) {
   float sum_squared = autocorrelation[0];
   float sum_sq_left = sum_squared, sum_sq_right = sum_squared;
 
-  for (int i = 0; i < (N+1)/2; ++i) {
+  for (int i = 0; i < (N + 1) / 2; ++i) {
     sum_sq_left  -= pow(in_buffer[i], 2);
-    sum_sq_right -= pow(in_buffer[N-1-i], 2);
+    sum_sq_right -= pow(in_buffer[N - 1 - i], 2);
     autocorrelation[i] *= 2.0 / (sum_sq_left + sum_sq_right);
   }
 
@@ -151,7 +152,7 @@ void do_peak_picking(float *sdf, float sample_rate, int N, float *freq, float *c
       // Find largest local maxima
       while (n < 64 && i < (N + 1) / 2 - 1) {
         // Current value is a local maxima within zero-crossings
-        if (sdf[i] > sdf[local_max] && sdf[i] > sdf[i-1] && sdf[i] > sdf[i+1]) {
+        if (sdf[i] > sdf[local_max] && sdf[i] > sdf[i - 1] && sdf[i] > sdf[i + 1]) {
           local_max = i;
         }
         // Negatively sloped zero-crossing detected - add peak to list
@@ -201,21 +202,21 @@ void do_peak_picking(float *sdf, float sample_rate, int N, float *freq, float *c
   y3 = sdf[x3];
 
   top_x = ((2.0 * y1 - 4.0 * y2 + 2.0 * y3) * x2 + y1 - y3) / (2.0 *  y1 - 4.0 * y2 + 2.0 * y3);
-  top_y = (- pow(y1, 2.0) + (8.0 * y2 + 2.0 * y3) * y1 - 16.0 * pow((y2 - 1.0/4.0 * y3), 2.0))/(8.0 * y1 - 16.0 * y2 + 8.0 * y3);
+  top_y = (- pow(y1, 2.0) + (8.0 * y2 + 2.0 * y3) * y1 - 16.0 * pow((y2 - 1.0 / 4.0 * y3), 2.0)) / (8.0 * y1 - 16.0 * y2 + 8.0 * y3);
 
 
-  *freq = sample_rate/top_x;
+  *freq = sample_rate / top_x;
   *corr = top_y;
 
   // *corr = sdf[peaks[i]];
   // if (*corr > 0.5)
-    // *freq = sample_rate / static_cast<float>(peaks[i]);
+  // *freq = sample_rate / static_cast<float>(peaks[i]);
 }
 
 float closest_frequency(float freq) {
   int k = 0;
   float diff = 1e6;
-  for (int i = 0; i < 14; ++i) {
+  for (int i = 0; i < 10; ++i) {
     if (abs(freq - freq_grid[i]) < diff) {
       diff = abs(freq - freq_grid[i]);
       k = i;
@@ -226,8 +227,8 @@ float closest_frequency(float freq) {
 
 int create_pulse_train(float *in, float freq, float sample_rate,
                        int N, int current_offset) {
-  int period = static_cast<int>(sample_rate/freq + 0.5);
-  int repeats = static_cast<int>((N - current_offset)/period);
+  int period = static_cast<int>(sample_rate / freq + 0.5);
+  int repeats = static_cast<int>((N - current_offset) / period);
   int new_offset = (repeats + 1) * period + current_offset - N;
 
   memset(in, 0, N * sizeof(float));
@@ -253,15 +254,15 @@ void do_pitch_shift(cfloat *new_spectrum, cfloat *orig_spectrum,
     if (new_index >= N) break;
     // new_spectrum[new_index] += abs(orig_spectrum[i]);
     new_spectrum[new_index] += abs(orig_spectrum[i]) *
-    // std::exp(im * std::arg(orig_spectrum[i])) *
-    static_cast<cfloat>(spectral_env[new_index]/spectral_env[i]);
+                               // std::exp(im * std::arg(orig_spectrum[i])) *
+                               static_cast<cfloat>(spectral_env[new_index] / spectral_env[i]);
   }
 }
 
 void psola(float *out_buffer, float *in_buffer, float *tmp_buffer, float *pitch_marks, float fund_freq, float new_freq, float sample_rate, int N) {
-  float mod_rate = fmin(fmax(fund_freq/new_freq, 0.5), 1.5);
-  int win_min = 2 * static_cast<int>(sample_rate/MINIMUM_FREQUENCY);
-  int period = static_cast<int>(sample_rate/fund_freq);
+  float mod_rate = fmin(fmax(fund_freq / new_freq, 0.5), 1.5);
+  int win_min = 2 * static_cast<int>(sample_rate / MINIMUM_FREQUENCY);
+  int period = static_cast<int>(sample_rate / fund_freq);
   float offset = 0;
   int offset_idx = 0;
   int oa_idx = 0;
@@ -274,7 +275,7 @@ void psola(float *out_buffer, float *in_buffer, float *tmp_buffer, float *pitch_
   pitch_marks[0] = period;
 
   while (pitch_marks[i - 1] < N - win_min) {
-    period = static_cast<int>(sample_rate/fund_freq);
+    period = static_cast<int>(sample_rate / fund_freq);
     i++;
     pitch_marks[i] = period + pitch_marks[i - 1];
   }
@@ -287,10 +288,10 @@ void psola(float *out_buffer, float *in_buffer, float *tmp_buffer, float *pitch_
     oa_idx += period;
 
     memcpy(tmp_buffer, in_buffer + offset_idx, 2 * period * sizeof(float));
-    do_windowing(tmp_buffer, HANN_WINDOW, 2*period);
+    do_windowing(tmp_buffer, HANN_WINDOW, 2 * period);
 
-    for (int i = 0; i < 2*period; ++i) {
-      out_buffer[oa_idx - period + i] += tmp_buffer[i]; 
+    for (int i = 0; i < 2 * period; ++i) {
+      out_buffer[oa_idx - period + i] += tmp_buffer[i];
     }
   }
 }
@@ -301,14 +302,14 @@ void antialias(float *out_buffer, float *in_buffer, int N) {
   memset(out_buffer, 0, N * sizeof(float));
   for (int i = 0; i < N; ++i) {
     if (i == 0) {
-      out_buffer[i] = B[0] * in_buffer[i] 
-      - A[0] * out_buffer[i];
+      out_buffer[i] = B[0] * in_buffer[i]
+                      - A[0] * out_buffer[i];
     } else if (i == 1) {
       out_buffer[i] = B[1] * in_buffer[i - 1] + B[0] * in_buffer[i]
-      - (A[1] * out_buffer[i - 1] + A[0] * out_buffer[i]);
+                      - (A[1] * out_buffer[i - 1] + A[0] * out_buffer[i]);
     } else {
-      out_buffer[i] = B[2] * in_buffer[i - 2] + B[1] * in_buffer[i - 1] + B[0] * in_buffer[i] 
-      - (A[2] * out_buffer[i - 2] + A[1] * out_buffer[i - 1] + A[0] * out_buffer[i]);
+      out_buffer[i] = B[2] * in_buffer[i - 2] + B[1] * in_buffer[i - 1] + B[0] * in_buffer[i]
+                      - (A[2] * out_buffer[i - 2] + A[1] * out_buffer[i - 1] + A[0] * out_buffer[i]);
     }
 
   }
@@ -316,9 +317,9 @@ void antialias(float *out_buffer, float *in_buffer, int N) {
 
 void resample(float *out_buffer, float *in_buffer, float mod_rate, int N) {
   float M = mod_rate;
-  float L = 1/mod_rate;
+  float L = 1 / mod_rate;
 
-  for (int i = 0; i < N/64; ++i) {
+  for (int i = 0; i < N / 64; ++i) {
     // Interpolation
 
   }
@@ -339,6 +340,7 @@ struct Autotune : public Unit {
   float fund_freq;
 
   SRC_STATE* resampler;
+  SRC_DATA resampler_data;
   int resampler_err;
 };
 
@@ -352,22 +354,22 @@ void Autotune_Ctor(Autotune *unit) {
   unit->m_fbufnum = -1e-9;
 
   unit->in_buffer = static_cast<float*>(
-    RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
+                      RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
   unit->out_buffer = static_cast<float*>(
-    RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
+                       RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
 
   unit->tmp_buffer = static_cast<float*>(
-    RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
+                       RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
   unit->phase_buffer = static_cast<float*>(
-    RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
+                         RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
 
   unit->fft_real = static_cast<float*>(
-    RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
+                     RTAlloc(unit->mWorld, FFT_SIZE * sizeof(float)));
   unit->fft_complex = static_cast<cfloat*>(
-    RTAlloc(unit->mWorld, FFT_COMPLEX_SIZE * sizeof(cfloat)));
+                        RTAlloc(unit->mWorld, FFT_COMPLEX_SIZE * sizeof(cfloat)));
 
   unit->spectrum = static_cast<cfloat*>(
-    RTAlloc(unit->mWorld, FFT_COMPLEX_SIZE * sizeof(cfloat)));
+                     RTAlloc(unit->mWorld, FFT_COMPLEX_SIZE * sizeof(cfloat)));
 
   memset(unit->in_buffer, 0, FFT_SIZE * sizeof(float));
   memset(unit->out_buffer, 0, FFT_SIZE * sizeof(float));
@@ -375,22 +377,28 @@ void Autotune_Ctor(Autotune *unit) {
   memset(unit->fft_complex, 0, FFT_COMPLEX_SIZE * sizeof(cfloat));
 
   unit->fft = fftwf_plan_dft_r2c_1d(
-    FFT_SIZE,
-    unit->fft_real,
+                FFT_SIZE,
+                unit->fft_real,
 
-    reinterpret_cast<fftwf_complex*>(unit->fft_complex),
-    FFTW_ESTIMATE);
+                reinterpret_cast<fftwf_complex*>(unit->fft_complex),
+                FFTW_ESTIMATE);
   unit->ifft = fftwf_plan_dft_c2r_1d(
-    FFT_SIZE,
-    reinterpret_cast<fftwf_complex*>(unit->fft_complex),
-    unit->fft_real,
-    FFTW_ESTIMATE);
+                 FFT_SIZE,
+                 reinterpret_cast<fftwf_complex*>(unit->fft_complex),
+                 unit->fft_real,
+                 FFTW_ESTIMATE);
 
   unit->pos = 0;
   unit->oscillator_offset = 0;
   unit->fund_freq = 440.0;
 
-  unit->resampler = src_new(SRC_SINC_BEST_QUALITY, 1, &unit->resampler_err);
+  unit->resampler = src_new(SRC_SINC_FASTEST, 1, &unit->resampler_err);
+  unit->resampler_data.data_in = unit->fft_real;
+  unit->resampler_data.data_out = unit->tmp_buffer;
+  unit->resampler_data.input_frames = WIN_SIZE;
+  unit->resampler_data.output_frames = FFT_SIZE;
+  unit->resampler_data.src_ratio = 0.75;
+  unit->resampler_data.end_of_input = 1;
 
   SETCALC(Autotune_next);
   Autotune_next(unit, 1);
@@ -414,7 +422,7 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
 
   SRC_STATE *resampler = unit->resampler;
-  SRC_DATA *resampler_data;
+  SRC_DATA resampler_data = unit->resampler_data;
 
   RGen &rgen = *unit->mParent->mRGen;
 
@@ -425,14 +433,16 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
   if (pos >= HOP_SIZE) {
     pos = 0;
+    int out_shunt_size;
 
     // FFT
     memcpy(fft_real, in_buffer, WIN_SIZE * sizeof(float));
     do_windowing(fft_real, HANN_WINDOW, WIN_SIZE);
     fftwf_execute(unit->fft);
 
-    // // Save spectrum for later
-    // memcpy(spectrum, fft_complex, FFT_COMPLEX_SIZE * sizeof(cfloat));
+    // Save spectrum for later
+    memcpy(spectrum, fft_complex, FFT_COMPLEX_SIZE * sizeof(cfloat));
+
 
     // // ++++ Pitch tracking ++++
     // // fund_freq = do_autocorrelation(fft_complex, phase_buffer,
@@ -450,33 +460,34 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
     // +++++++++++++++++++++++
 
-    mod_rate = fund_freq/new_freq;
-    // psola(fft_real, in_buffer, tmp_buffer, phase_buffer, fund_freq, new_freq, SAMPLERATE, WIN_SIZE);
-    // antialias(tmp_buffer, in_buffer, WIN_SIZE);
+    mod_rate = fund_freq / new_freq;
+    psola(fft_real, in_buffer, tmp_buffer, phase_buffer, fund_freq, new_freq, SAMPLERATE, WIN_SIZE);
 
-    
-    resampler_data->data_in = in_buffer;
-    resampler_data->data_out = fft_real;
-    resampler_data->input_frames = WIN_SIZE;
-    resampler_data->output_frames = FFT_SIZE;
-    resampler_data->src_ratio = fund_freq/new_freq;
-    resampler_data->end_of_input = 1;
 
-    src_process(resampler, resampler_data);
+    memset(tmp_buffer, 0, FFT_SIZE * sizeof(float));
 
-    // resample(fft_real, tmp_buffer, mod_rate, WIN_SIZE);
-    // memcpy(fft_real, tmp_buffer, WIN_SIZE * sizeof(float));
-    // do_windowing(fft_real, HANN_WINDOW, WIN_SIZE, 1.0);
+    src_set_ratio(resampler, fund_freq / new_freq);
+    src_process(resampler, &resampler_data);
 
-    // ++++ Spectral envelope estimation ++++
+    src_reset(resampler);
 
-    // Create cepstrum
+    memcpy(fft_real, tmp_buffer, FFT_SIZE * sizeof(float));
+    do_windowing(fft_real, HANN_WINDOW, resampler_data.output_frames_gen, 1.0);
+    // fftwf_execute(unit->fft);
+
+
+
+    // // resample(fft_real, tmp_buffer, mod_rate, WIN_SIZE);
+
+    // // ++++ Spectral envelope estimation ++++
+
+    // // Create cepstrum
     // memcpy(fft_complex, spectrum, FFT_COMPLEX_SIZE * sizeof(cfloat));
     // do_log_abs(fft_complex, FFT_COMPLEX_SIZE);
     // fftwf_execute(unit->ifft);
 
     // // Window cepstrum to estimate spectral envelope
-    // do_windowing(fft_real, CEPSTRUM_LOWPASS, FFT_SIZE, 1.0/FFT_SIZE);
+    // do_windowing(fft_real, CEPSTRUM_LOWPASS, FFT_SIZE, 1.0 / FFT_SIZE);
 
     // // Go back to frequency domain to prepare for filtering
     // fftwf_execute(unit->fft);
@@ -484,23 +495,22 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
     // // +++++++++++++++++++++++++++++++++++++++
 
 
+    // // // Create excitation signal
+    // // unit->oscillator_offset = create_pulse_train(fft_real, new_freq, SAMPLERATE,
+    // // WIN_SIZE, unit->oscillator_offset);
 
-    // // Create excitation signal
-    // unit->oscillator_offset = create_pulse_train(fft_real, new_freq, SAMPLERATE,
-    // WIN_SIZE, unit->oscillator_offset);
 
-    // memcpy(bufData, fft_real, bufFrames * sizeof(float));
+    // // // Zeropad to match conditions for convolution
+    // // do_zeropad(fft_real, WIN_SIZE, FFT_SIZE);
+    // // fftwf_execute(unit->fft);
 
-    // // Zeropad to match conditions for convolution
-    // do_zeropad(fft_real, WIN_SIZE, FFT_SIZE);
-    // fftwf_execute(unit->fft);
+
+    // memcpy(fft_complex, spectrum, FFT_COMPLEX_SIZE * sizeof(cfloat));
     // // Circular convolution
     // for (int k = 0; k < FFT_COMPLEX_SIZE; ++k) {
-    //   
-
-    // fft_complex[k] *= tmp_buffer[k];
-    // //   // fft_complex[k] *= tmp_buffer[k] * std::exp(im*static_cast<cfloat>(rgen.sum3rand(2.0)));
-    // // }
+    //   spectrum[k] *= phase_buffer[k];
+    //   // fft_complex[k] *= tmp_buffer[k] * std::exp(im*static_cast<cfloat>(rgen.sum3rand(2.0)));
+    // }
 
     // // do_pitch_shift(fft_complex, spectrum, tmp_buffer, new_freq/fund_freq, FFT_COMPLEX_SIZE);
 
@@ -511,12 +521,14 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
     // !!! SILENCE !!!
     // memset(fft_real, 0, FFT_SIZE * sizeof(float));
-    
 
-    memmove(out_buffer, out_buffer + HOP_SIZE, SHUNT_SIZE * sizeof(float));
 
-    for (int i = 0; i < FFT_SIZE; ++i) {
-      if (i < SHUNT_SIZE) {
+    out_shunt_size = resampler_data.output_frames_gen - HOP_SIZE;
+
+    memmove(out_buffer, out_buffer + HOP_SIZE, out_shunt_size * sizeof(float));
+
+    for (int i = 0; i < resampler_data.output_frames_gen; ++i) {
+      if (i < out_shunt_size) {
         // Overlap and add
         out_buffer[i] += fft_real[i];
       } else {
@@ -530,13 +542,6 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
   }
 
   memcpy(out, out_buffer + pos, inNumSamples * sizeof(float));
-  // readpos += inNumSamples;
-
-
-  // if (readpos >= FFT_SIZE) {
-  //   readpos = 0;
-  // }
-
   unit->pos = pos;
   unit->fund_freq = fund_freq;
 }
@@ -545,7 +550,6 @@ void Autotune_Dtor(Autotune *unit) {
   fftwf_destroy_plan(unit->fft);
   fftwf_destroy_plan(unit->ifft);
 
-  RTFree(unit->mWorld, unit->win);
   RTFree(unit->mWorld, unit->in_buffer);
   RTFree(unit->mWorld, unit->out_buffer);
   RTFree(unit->mWorld, unit->tmp_buffer);
