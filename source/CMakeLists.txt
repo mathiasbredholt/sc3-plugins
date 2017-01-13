@@ -188,7 +188,8 @@ install(DIRECTORY local DESTINATION "${INSTALL_DESTINATION_DISTRO}"
 
 # Autotune
 
-file(GLOB AutotuneSources Autotune/*cpp ../external_libraries/libsamplerate/src/*.c)
+file(GLOB AutotuneSources Autotune/*cpp)
+file(GLOB LibsamplerateSources "../external_libraries/libsamplerate/src/*.c")
 
 include_directories(../external_libraries/libsamplerate/src)
 
@@ -198,7 +199,7 @@ if (!FFTW3F_FOUND)
 endif()
 set (AutotuneLibs ${FFTW3F_LIBRARY})
 
-BUILD_PLUGIN(Autotune "${AutotuneSources}"
+BUILD_PLUGIN(Autotune "${AutotuneSources};${LibsamplerateSources}"
              "${AutotuneLibs}" "Autotune")
 
 include_directories(${FFTW3F_INCLUDE_DIR})
