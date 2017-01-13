@@ -566,8 +566,9 @@ void peakpicking(Tartini *unit) {
 	 *             *
 	 \      *     /\      *     /\
 	 _\____/\____/__\/\__/\____/__
-	 \  /  \  /      \/  \  /
-	 \/    \/            \/
+	   \  /  \  /      \/  \  /
+	    \/    \/            \/
+
 	 */
     
     //while(pos < k-1 && output[pos] > 0.0f) pos++; //find the first negitive zero crossing
