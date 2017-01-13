@@ -1,5 +1,6 @@
 // Copyright 2017 M. Bredholt and M. Kirkegaard
 #include "SC_PlugIn.h"
+#include "samplerate.h"
 #include <fftw3.h>
 #include <complex>
 
@@ -313,15 +314,12 @@ void antialias(float *out_buffer, float *in_buffer, int N) {
 }
 
 void resample(float *out_buffer, float *in_buffer, float mod_rate, int N) {
-  int block_index = 0;
   float M = mod_rate;
   float L = 1/mod_rate;
 
   for (int i = 0; i < N/64; ++i) {
     // Interpolation
-    for (int i = 0; i < N; ++i) {
 
-    }
   }
 
   memset(out_buffer, 0, N * sizeof(float));
