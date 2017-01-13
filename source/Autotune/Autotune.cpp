@@ -257,14 +257,14 @@ void do_pitch_shift(cfloat *new_spectrum, cfloat *orig_spectrum,
   }
 }
 
-void psola(float *out_buffer, float *in_buffer, float *tmp_buffer, float *pitch_marks, float mod_rate, float sample_rate, int N) {
+void psola(float *out_buffer, float *in_buffer, float *tmp_buffer, float *pitch_marks, float fund_freq, float new_freq, float sample_rate, int N) {
+  float mod_rate = fmin(fmax(fund_freq/new_freq, 0.5), 1.5);
   int win_min = 2 * static_cast<int>(sample_rate/MINIMUM_FREQUENCY);
   int period = static_cast<int>(sample_rate/fund_freq);
   float offset = 0;
   int offset_idx = 0;
   int oa_idx = 0;
   int i = 1;
-  mod_rate = fmin(fmax(mod_rate, 0.5), 1.5);
 
   memset(pitch_marks, 0, FFT_SIZE * sizeof(float));
   memset(out_buffer, 0, FFT_SIZE * sizeof(float));
@@ -336,6 +336,9 @@ struct Autotune : public Unit {
   int oscillator_offset;
   float freq;
   float fund_freq;
+
+  SRC_STATE* resampler;
+  int resampler_err;
 };
 
 extern "C" {
@@ -386,6 +389,8 @@ void Autotune_Ctor(Autotune *unit) {
   unit->oscillator_offset = 0;
   unit->fund_freq = 440.0;
 
+  unit->resampler = src_new(SRC_SINC_BEST_QUALITY, 1, &unit->resampler_err);
+
   SETCALC(Autotune_next);
   Autotune_next(unit, 1);
 }
@@ -405,6 +410,10 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
   float mod_rate = 1.0;
   float new_freq = 1;
   float corr = 0.0;
+
+
+  SRC_STATE *resampler = unit->resampler;
+  SRC_DATA *resampler_data;
 
   RGen &rgen = *unit->mParent->mRGen;
 
@@ -441,9 +450,20 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
     // +++++++++++++++++++++++
 
     mod_rate = fund_freq/new_freq;
-    // psola(fft_real, in_buffer, tmp_buffer, phase_buffer, mod_rate, SAMPLERATE, WIN_SIZE);
-    antialias(tmp_buffer, in_buffer, WIN_SIZE);
-    resample(fft_real, tmp_buffer, mod_rate, WIN_SIZE);
+    // psola(fft_real, in_buffer, tmp_buffer, phase_buffer, fund_freq, new_freq, SAMPLERATE, WIN_SIZE);
+    // antialias(tmp_buffer, in_buffer, WIN_SIZE);
+
+    
+    resampler_data->data_in = in_buffer;
+    resampler_data->data_out = fft_real;
+    resampler_data->input_frames = WIN_SIZE;
+    resampler_data->output_frames = FFT_SIZE;
+    resampler_data->src_ratio = fund_freq/new_freq;
+    resampler_data->end_of_input = 1;
+
+    src_process(resampler, resampler_data);
+
+    // resample(fft_real, tmp_buffer, mod_rate, WIN_SIZE);
     // memcpy(fft_real, tmp_buffer, WIN_SIZE * sizeof(float));
     // do_windowing(fft_real, HANN_WINDOW, WIN_SIZE, 1.0);
 
@@ -532,6 +552,8 @@ void Autotune_Dtor(Autotune *unit) {
   RTFree(unit->mWorld, unit->fft_real);
   RTFree(unit->mWorld, unit->fft_complex);
   RTFree(unit->mWorld, unit->spectrum);
+
+  src_delete(unit->resampler);
 }
 
 PluginLoad(Autotune) {
