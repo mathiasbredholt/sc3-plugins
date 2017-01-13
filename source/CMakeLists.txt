@@ -194,12 +194,20 @@ find_package(FFTW3f)
 if (!FFTW3F_FOUND)
     message(SEND_ERROR "Cannot find libfftw3f")
 endif()
-set (AutotuneLibs ${FFTW3F_LIBRARY})
+
+find_package(libsamplerate)
+if (!LIBSAMPLERATE_FOUND)
+    message(SEND_ERROR "Cannot find libsamplerate")
+endif()
+
+set (AutotuneLibs "${FFTW3F_LIBRARY};${LIBSAMPLERATE_LIBRARY}")
+
 
 BUILD_PLUGIN(Autotune "${AutotuneSources}"
              "${AutotuneLibs}" "Autotune")
 
 include_directories(${FFTW3F_INCLUDE_DIR})
+include_directories(${LIBSAMPLERATE_INCLUDE_DIR})
 set_property(TARGET Autotune APPEND PROPERTY COMPILE_DEFINITIONS SC_FFT_FFTW)
 if (SUPERNOVA)
     set_property(TARGET Autotune_supernova APPEND PROPERTY COMPILE_DEFINITIONS SC_FFT_FFTW)
