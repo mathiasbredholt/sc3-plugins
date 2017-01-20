@@ -10,6 +10,7 @@
 #define FFT_COMPLEX_SIZE static_cast<int>(FFT_SIZE/2 + 1)
 #define WIN_SIZE 2048
 #define HOP_SIZE 2048
+#define WRITEPOS 3072
 #define SHUNT_SIZE (FFT_SIZE - HOP_SIZE)
 #define PI 3.1415926535898f
 #define TWOPI 6.28318530717952646f
@@ -27,15 +28,16 @@
 
 static InterfaceTable *ft;
 
+float *debug;
+
 typedef std::complex<float> cfloat;
 
-const cfloat im(0.0, 1.0);    
+const cfloat im(0.0, 1.0);
 
-const float period_grid[] = {
-  // 130.81, 155.56, 174.61, 196.00, 233.08,
-  // 261.63, 311.13, 349.23, 392.00, 466.16
-
-  340.0
+const float freq_grid[] = {
+  130.81, 155.56, 174.61, 196.00, 233.08,
+  261.63, 311.13, 349.23, 392.00, 466.16,
+  523.25, 622.25, 698.46, 783.99, 923.33
 };
 
 float* alloc_buffer(int N, Unit *unit) {
@@ -197,11 +199,13 @@ void calc_square_difference_function(float *autocorrelation,
     sum_sq_left  -= pow(in_buffer[i], 2);
     sum_sq_right -= pow(in_buffer[N - 1 - i], 2);
     autocorrelation[i] *= 2.0 / (sum_sq_left + sum_sq_right);
+
+    debug[i] = autocorrelation[i];
   }
 
 }
 
-void do_peak_picking(float *sdf, float sample_rate, int N, int *period) {
+void do_peak_picking(float *sdf, float sample_rate, int N, int *period, float *corr) {
   int i = 0;
   int n = 0;
   int peaks[64];
@@ -242,6 +246,7 @@ void do_peak_picking(float *sdf, float sample_rate, int N, int *period) {
 
   if (n == 0) {
     *period = DEFAULT_PERIOD;
+    *corr = 0.0;
     return;
   }
 
@@ -272,142 +277,145 @@ void do_peak_picking(float *sdf, float sample_rate, int N, int *period) {
   top_x = ((2.0 * y1 - 4.0 * y2 + 2.0 * y3) * x2 + y1 - y3) / (2.0 *  y1 - 4.0 * y2 + 2.0 * y3);
   top_y = (- pow(y1, 2.0) + (8.0 * y2 + 2.0 * y3) * y1 - 16.0 * pow((y2 - 1.0 / 4.0 * y3), 2.0)) / (8.0 * y1 - 16.0 * y2 + 8.0 * y3);
 
-  if (top_y > 0.7) {
-    *period = static_cast<int>(round(top_x));
+  if (top_y > 0.2 && MAXIMUM_FREQUENCY > sample_rate / top_x && MINIMUM_FREQUENCY <    sample_rate / top_x) {
+    *period = static_cast<int>(round(top_x * 8));
+  } else {
+    *period = DEFAULT_PERIOD;
   }
+
+  *corr = top_y;
 }
 
-float closest_period(int period) {
+float closest_period(int period, float sample_rate) {
   int k = 0;
   float diff = 1e9;
-  for (int i = 0; i < 1; ++i) {
-    if (abs(period - period_grid[i]) < diff) {
-      diff = abs(period - period_grid[i]);
+  for (int i = 0; i < 15; ++i) {
+    if (abs(period - (sample_rate/freq_grid[i])) < diff) {
+      diff = abs(period - (sample_rate/freq_grid[i]));
       k = i;
     }
   }
-  return period_grid[k];
+  return (sample_rate/freq_grid[k]);
 }
 
-void pitch_tracking(float *in_buffer, float *fft_real, cfloat *fft_complex, int *period, float sample_rate) {
-  float energy;
-  int win_size = FFT_SIZE;
-  int half_win_size = WIN_SIZE;
-  // do_resample(fft_real, in_buffer, 0.125, FFT_SIZE, win_size, SRC_LINEAR);
-  // energy = calc_signal_energy(fft_real, win_size);
+void pitch_tracking(float *in_buffer, float *fft_real, cfloat *fft_complex, int *period, float *corr, float *energy, float sample_rate, int N) {
+  int win_size = N / 8;
+  int half_win_size = N / 16;
+  do_resample(fft_real, in_buffer, 0.125, FFT_SIZE, win_size, SRC_LINEAR);
+  *energy = calc_signal_energy(fft_real, win_size);
   // if (energy > 0.4) {
-    do_fft(fft_complex, in_buffer, win_size);
-    calc_power_spectral_density(fft_complex, half_win_size);
-    do_ifft(fft_real, fft_complex, win_size);
-    calc_square_difference_function(fft_real, in_buffer, half_win_size);
-    do_peak_picking(fft_real, sample_rate, half_win_size, period);
+  do_fft(fft_complex, fft_real, win_size);
+  calc_power_spectral_density(fft_complex, half_win_size);
+  do_ifft(fft_real, fft_complex, win_size);
+  calc_square_difference_function(fft_real, in_buffer, half_win_size);
+  do_peak_picking(fft_real, sample_rate / 8, half_win_size, period, corr);
   // } else {
     // *period = DEFAULT_PERIOD;
   // }
 }
 
-int create_pulse_train(float *in, float freq, float sample_rate,
-                       int N, int current_offset) {
-  int period = static_cast<int>(sample_rate / freq + 0.5);
-  int repeats = static_cast<int>((N - current_offset) / period);
-  int new_offset = (repeats + 1) * period + current_offset - N;
+// int create_pulse_train(float *in, float freq, float sample_rate,
+//                        int N, int current_offset) {
+//   int period = static_cast<int>(sample_rate / freq + 0.5);
+//   int repeats = static_cast<int>((N - current_offset) / period);
+//   int new_offset = (repeats + 1) * period + current_offset - N;
 
-  memset(in, 0, N * sizeof(float));
+//   memset(in, 0, N * sizeof(float));
 
-  in[current_offset] = 1.0;
-  for (int i = current_offset + 1; i - current_offset < period; ++i) {
-    in[i] = 0.0;
-  }
+//   in[current_offset] = 1.0;
+//   for (int i = current_offset + 1; i - current_offset < period; ++i) {
+//     in[i] = 0.0;
+//   }
 
-  for (int i = 0; i < repeats; ++i) {
-    memcpy(in + i * period, in, period * sizeof(float));
-  }
+//   for (int i = 0; i < repeats; ++i) {
+//     memcpy(in + i * period, in, period * sizeof(float));
+//   }
 
-  return new_offset;
-}
+//   return new_offset;
+// }
 
-void do_pitch_shift(cfloat *new_spectrum, cfloat *orig_spectrum,
-                    float *spectral_env, float ratio, int N) {
-  int new_index;
-  memset(new_spectrum, 0, N * sizeof(cfloat));
-  for (int i = 0; i < N; ++i) {
-    new_index = static_cast<int>(i * ratio);
-    if (new_index >= N) break;
-    // new_spectrum[new_index] += abs(orig_spectrum[i]);
-    new_spectrum[new_index] += abs(orig_spectrum[i]) *
-                               // std::exp(im * std::arg(orig_spectrum[i])) *
-                               static_cast<cfloat>(spectral_env[new_index] / spectral_env[i]);
-  }
-}
+// void do_pitch_shift(cfloat *new_spectrum, cfloat *orig_spectrum,
+//                     float *spectral_env, float ratio, int N) {
+//   int new_index;
+//   memset(new_spectrum, 0, N * sizeof(cfloat));
+//   for (int i = 0; i < N; ++i) {
+//     new_index = static_cast<int>(i * ratio);
+//     if (new_index >= N) break;
+//     // new_spectrum[new_index] += abs(orig_spectrum[i]);
+//     new_spectrum[new_index] += abs(orig_spectrum[i]) *
+//                                // std::exp(im * std::arg(orig_spectrum[i])) *
+//                                static_cast<cfloat>(spectral_env[new_index] / spectral_env[i]);
+//   }
+// }
 
-void psola(float *out_buffer, float *in_buffer, float *tmp_buffer,
-           float fund_freq, float new_freq,
-           float sample_rate, int N) {
-  int k, j;
-  float pitch_scale = new_freq / fund_freq;
-  int period = static_cast<int>(sample_rate/fund_freq);
+// void psola(float *out_buffer, float *in_buffer, float *tmp_buffer,
+//            float fund_freq, float new_freq,
+//            float sample_rate, int N) {
+//   int k, j;
+//   float pitch_scale = new_freq / fund_freq;
+//   int period = static_cast<int>(sample_rate/fund_freq);
 
-  memset(out_buffer, 0, FFT_SIZE * sizeof(float));
+//   memset(out_buffer, 0, FFT_SIZE * sizeof(float));
 
-  // Create Hann window
-  memset(tmp_buffer, 0, 2 * period * sizeof(float));
-  for (int i = 0; i < 2 * period; ++i) {
-    tmp_buffer[i] = 1.0;
-  }
-  do_windowing(tmp_buffer, HANN_WINDOW, 2 * period, 1.0);
+//   // Create Hann window
+//   memset(tmp_buffer, 0, 2 * period * sizeof(float));
+//   for (int i = 0; i < 2 * period; ++i) {
+//     tmp_buffer[i] = 1.0;
+//   }
+//   do_windowing(tmp_buffer, HANN_WINDOW, 2 * period, 1.0);
 
-  k = period;
-  j = static_cast<int>(period * pitch_scale);
+//   k = period;
+//   j = static_cast<int>(period * pitch_scale);
 
-  while (k < N) {
-    if (k == 0) {
-      for (int i = 0; i < 2 * period; ++i) {
-        if (i < period) {
-          out_buffer[j + i] += in_buffer[k + i];
-        } else {
-          out_buffer[j + i] += in_buffer[k + i] * tmp_buffer[i];
-        }
-      }
-    } else {
-      for (int i = 0; i < 2 * period; ++i) {
-        out_buffer[j + i] += in_buffer[k + i] * tmp_buffer[i];
-      }
-    }
+//   while (k < N) {
+//     if (k == 0) {
+//       for (int i = 0; i < 2 * period; ++i) {
+//         if (i < period) {
+//           out_buffer[j + i] += in_buffer[k + i];
+//         } else {
+//           out_buffer[j + i] += in_buffer[k + i] * tmp_buffer[i];
+//         }
+//       }
+//     } else {
+//       for (int i = 0; i < 2 * period; ++i) {
+//         out_buffer[j + i] += in_buffer[k + i] * tmp_buffer[i];
+//       }
+//     }
 
-    k += period;
-    j += static_cast<int>(period * pitch_scale);
-  }
-}
+//     k += period;
+//     j += static_cast<int>(period * pitch_scale);
+//   }
+// }
 
-void antialias(float *out_buffer, float *in_buffer, int N) {
-  float B[] = { 0.2929, 0.5858, 0.2929 };
-  float A[] = { 1, -2.6368e-16, 0.1716 };
-  memset(out_buffer, 0, N * sizeof(float));
-  for (int i = 0; i < N; ++i) {
-    if (i == 0) {
-      out_buffer[i] = B[0] * in_buffer[i]
-                      - A[0] * out_buffer[i];
-    } else if (i == 1) {
-      out_buffer[i] = B[1] * in_buffer[i - 1] + B[0] * in_buffer[i]
-                      - (A[1] * out_buffer[i - 1] + A[0] * out_buffer[i]);
-    } else {
-      out_buffer[i] = B[2] * in_buffer[i - 2] + B[1] * in_buffer[i - 1] + B[0] * in_buffer[i]
-                      - (A[2] * out_buffer[i - 2] + A[1] * out_buffer[i - 1] + A[0] * out_buffer[i]);
-    }
+// void antialias(float *out_buffer, float *in_buffer, int N) {
+//   float B[] = { 0.2929, 0.5858, 0.2929 };
+//   float A[] = { 1, -2.6368e-16, 0.1716 };
+//   memset(out_buffer, 0, N * sizeof(float));
+//   for (int i = 0; i < N; ++i) {
+//     if (i == 0) {
+//       out_buffer[i] = B[0] * in_buffer[i]
+//                       - A[0] * out_buffer[i];
+//     } else if (i == 1) {
+//       out_buffer[i] = B[1] * in_buffer[i - 1] + B[0] * in_buffer[i]
+//                       - (A[1] * out_buffer[i - 1] + A[0] * out_buffer[i]);
+//     } else {
+//       out_buffer[i] = B[2] * in_buffer[i - 2] + B[1] * in_buffer[i - 1] + B[0] * in_buffer[i]
+//                       - (A[2] * out_buffer[i - 2] + A[1] * out_buffer[i - 1] + A[0] * out_buffer[i]);
+//     }
 
-  }
-}
+//   }
+// }
 
-float do_moving_average(float *in_buffer, int N) {
+int do_moving_average(int *in_buffer, int N) {
   float out = 0.0;
   for (int i = 0; i < N; ++i) {
-    out += in_buffer[i] / static_cast<float>(N);
+    out += static_cast<float>(in_buffer[i]) / static_cast<float>(N);
   }
-  return out;
+  return static_cast<int>(out);
 }
 
 struct Autotune : public Unit {
-  float *in_buffer, *out_buffer, *fft_real, *tmp_buffer, *resampler_in;
+  float *in_buffer, *out_buffer, *fft_real, *tmp_buffer, *resampler_in, *correlation_buffer;
   float *freq_buffer;
   cfloat *fft_complex;
   SndBuf *m_buf;
@@ -419,8 +427,9 @@ struct Autotune : public Unit {
   int period;
   int *period_buffer, *marks_buffer;
   int period_count;
-  int tk;
-  int writepos;
+  float tk;
+  int readpos;
+  bool write_flag;
 };
 
 extern "C" {
@@ -433,39 +442,42 @@ void Autotune_Ctor(Autotune *unit) {
   unit->in_buffer = alloc_buffer(FFT_SIZE, unit);
   unit->out_buffer = alloc_buffer(FFT_SIZE, unit);
   unit->fft_real = alloc_buffer(FFT_SIZE, unit);
-  unit->tmp_buffer = alloc_buffer(FFT_SIZE * 2, unit);
-  unit->resampler_in = alloc_buffer(FFT_SIZE, unit);
+  unit->tmp_buffer = alloc_buffer(FFT_SIZE, unit);
+  // unit->resampler_in = alloc_buffer(FFT_SIZE, unit);
   unit->fft_complex = alloc_complex_buffer(FFT_COMPLEX_SIZE, unit);
 
   clear_buffer(unit->in_buffer, FFT_SIZE);
   clear_buffer(unit->out_buffer, FFT_SIZE);
   clear_buffer(unit->fft_real, FFT_SIZE);
-  clear_buffer(unit->tmp_buffer, FFT_SIZE * 2);
-  clear_buffer(unit->resampler_in, FFT_SIZE);
+  clear_buffer(unit->tmp_buffer, FFT_SIZE);
+  // clear_buffer(unit->resampler_in, FFT_SIZE);
   clear_complex_buffer(unit->fft_complex, FFT_COMPLEX_SIZE);
 
-  unit->f0_count = 0;
+  // unit->f0_count = 0;
 
   unit->pos = 0;
-  unit->oscillator_offset = 0;
-  unit->average_freq = 440.0;
-  unit->freq_buffer = alloc_buffer(8, unit);
-  for (int i = 0; i < 8; ++i) {
-    unit->freq_buffer[i] = unit->average_freq;
-  }
+  // unit->oscillator_offset = 0;
+  // unit->average_freq = 440.0;
+  // unit->freq_buffer = alloc_buffer(8, unit);
+  // for (int i = 0; i < 8; ++i) {
+  //   unit->freq_buffer[i] = unit->average_freq;
+  // }
 
   unit->m_fbufnum = -1e-9;
 
-
   unit->period = DEFAULT_PERIOD;
   unit->period_buffer = alloc_int_buffer(8, unit);
+  unit->correlation_buffer = alloc_buffer(8, unit);
+  clear_buffer(unit->correlation_buffer, 8);
   unit->marks_buffer = alloc_int_buffer(8, unit);
   unit->period_count = 0;
   unit->tk = unit->period;
   memset(unit->period_buffer, 0, 8 * sizeof(int));
   memset(unit->marks_buffer, 0, 8 * sizeof(int));
 
-  unit->writepos = 0;
+  unit->readpos = WIN_SIZE;
+
+  unit->write_flag = false;
 
   SETCALC(Autotune_next);
   Autotune_next(unit, 1);
@@ -504,11 +516,11 @@ void Autotune_Ctor(Autotune *unit) {
 //     pitch_tracking(in_buffer, fft_real, fft_complex, &f0_freq, &corr, SAMPLERATE);
 
 //     freq_buffer[f0_count] = f0_freq;
-//     f0_count++;
-//     f0_count &= 0x3; // 4 counter
+    // f0_count++;
+    // f0_count &= 0x3; // 4 counter
 
-//     average_freq = do_moving_average(freq_buffer, 4);
-//     new_freq = closest_frequency(average_freq * 2);
+    // average_freq = do_moving_average(freq_buffer, 4);
+    // new_freq = closest_frequency(average_freq * 2);
 
 //     // ++++++++++++++++++++++
 
@@ -588,7 +600,7 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
   float *in = IN(1);
   float *out = OUT(0);
   int pos = unit->pos;
-  int writepos = unit->writepos;
+  int readpos = unit->readpos;
 
   float *in_buffer = unit->in_buffer;
   float *out_buffer = unit->out_buffer;
@@ -599,52 +611,29 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
   int period = unit->period;
   int old_period;
   int *period_buffer = unit->period_buffer;
+  float *correlation_buffer = unit->correlation_buffer;
   int *marks_buffer = unit->marks_buffer;
   int period_count = unit->period_count;
   int shunt_size = WIN_SIZE - period;
 
-  int tk = unit->tk;
+  float tk = unit->tk;
 
   GET_BUF
+
+  debug = bufData;
 
   memcpy(in_buffer + shunt_size + pos, in, inNumSamples * sizeof(float));
   pos += inNumSamples;
 
-  if (pos >= period) {
-    pos -= period;
-
-    // // +++++++++++++ Analysis +++++++++++++
-    old_period = period;
-    pitch_tracking(in_buffer, fft_real, fft_complex, &period, SAMPLERATE);
-    period_buffer[period_count] = period;
-    period_count++;
-
-    for (int i = 1; i < period_count + 1; ++i) {
-      marks_buffer[i] = period_buffer[i - 1] + marks_buffer[i - 1];
-    }
-
-    memcpy(tmp_buffer + marks_buffer[period_count - 1] * 2, in_buffer, 2 * period * sizeof(float));
-    do_windowing(tmp_buffer + marks_buffer[period_count - 1] * 2, HANN_WINDOW, 2 * period);
-
-    memcpy(bufData, tmp_buffer, FFT_SIZE * 2 * sizeof(float));
-
-    // period_count &= 0x3;
-
-    // printf("%d\n", period);
-    memmove(in_buffer, in_buffer + old_period, shunt_size * sizeof(float));
-  }
-
   // +++++++ Synthesis ++++++++++++++++
 
-  while (period_count >= 3) {
+  while (period_count > 3) {
     int min_t = INT_MAX;
     int idx = 1;
-    int pit;
+    int seg_len;
     float pitchscale;
-    int dt;
+    float dt;
     
-    // printf("%d, %d, %d\n", writepos, period_count, tk);
-
     for (int i = 0; i < period_count; ++i) {
       if (min_t > abs(marks_buffer[i + 1] - tk)) {
         idx = i;
@@ -652,42 +641,94 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
       }
     }
 
-    pit = period_buffer[idx];
-    // pitchscale = 1.5;
-    pitchscale = fmin(2.0, fmax(0.5, closest_period(pit)/static_cast<float>(pit)));
-    dt = static_cast<int>(round(static_cast<float>(pit)/pitchscale));
+    seg_len = period_buffer[idx];
 
-    memmove(out_buffer, out_buffer + dt, (FFT_SIZE - dt) * sizeof(float));
-    memset(out_buffer + WIN_SIZE, 0, WIN_SIZE * sizeof(float));
-
-    for (int j = 0; j < 2 * pit; ++j) {
-      out_buffer[WIN_SIZE - pit + j] +=
-      tmp_buffer[j + marks_buffer[idx] * 2] / pitchscale;
+    if (correlation_buffer[idx] > 0.4) {    // Segment is voiced
+      // Find closest period in grid
+      // pitchscale =  1.5;
+      pitchscale = fmin(2.0, fmax(0.5,
+        static_cast<float>(seg_len)/closest_period(seg_len, SAMPLERATE)));
+    } else {                                // Segment is unvoiced
+      seg_len = DEFAULT_PERIOD;
+      // idx = 1; // Go to next 
+      pitchscale = 1.0;
     }
+    
+    // Time step
+    dt = static_cast<float>(seg_len)/pitchscale;
 
-    memmove(tmp_buffer, tmp_buffer + marks_buffer[idx] * 2, FFT_SIZE * 2 * sizeof(float));
+    // Move output buffer with time step
+    memmove(out_buffer,
+            out_buffer + static_cast<int>(round(dt)),
+            (FFT_SIZE - static_cast<int>(round(dt))) * sizeof(float));
 
+    // +++++++++++ OVERLAP AND ADD +++++++++++++++++++
+    clear_buffer(out_buffer + WRITEPOS, FFT_SIZE - WRITEPOS);
+    // Add to existing data
+    for (int j = 0; j < 2 * seg_len; ++j) {
+      out_buffer[WRITEPOS - seg_len + j] +=
+      tmp_buffer[marks_buffer[idx] * 2 + j] / pitchscale;
+    }
+    // +++++++++++++++++++++++++++++++++++++++++++++++
+
+    // Increment time offset
     tk += dt - marks_buffer[idx];
 
-    memmove(period_buffer, period_buffer + idx, period_count * sizeof(int));
+    // Remove segment at position idx from buffers
+    memmove(tmp_buffer, tmp_buffer + marks_buffer[idx] * 2, (FFT_SIZE - marks_buffer[idx] * 2) * sizeof(float));
+
     period_count -= idx;
+    memmove(period_buffer, period_buffer + idx, period_count * sizeof(int));
+    memmove(correlation_buffer, correlation_buffer + idx, period_count * sizeof(float));
+    
+    readpos -= static_cast<int>(round(dt));
+    printf("%d, %f\n", readpos, dt);
 
-    for (int i = 1; i < period_count + 1; ++i) {
-      marks_buffer[i] = period_buffer[i - 1] + marks_buffer[i - 1];
-    }
-
-    writepos -= dt;
-    // period_count -= 1;
+    unit->write_flag = true;
   }
 
+  if (pos >= period) {
+    float corr, energy;
+    int tmp_period;
+    pos -= period;
 
-  memcpy(out, out_buffer + writepos, inNumSamples * sizeof(float));
-  writepos += inNumSamples;
+    // // +++++++++++++ Analysis +++++++++++++
+    old_period = period;
+    pitch_tracking(in_buffer, fft_real, fft_complex, &period, &corr, &energy, SAMPLERATE, FFT_SIZE);
+    period_buffer[period_count] = period;
+    // period = do_moving_average(period_buffer, 3);
+    // period_buffer[period_count] = period;
+
+    correlation_buffer[period_count] = corr;
+
+    // Update marks buffer
+    for (int i = 0; i < period_count; ++i) {
+      marks_buffer[i + 1] = period_buffer[i] + marks_buffer[i];
+    }
+
+    // Save input and window
+    memcpy(tmp_buffer + marks_buffer[period_count] * 2, in_buffer, 2 * period * sizeof(float));
+    do_windowing(tmp_buffer + marks_buffer[period_count] * 2, HANN_WINDOW, 2 * period);
+
+    // printf("%d\n", period);
+    // memcpy(bufData, tmp_buffer, bufFrames * sizeof(float));
+    period_count++;
+
+    // Move the last part to the beginning 
+    memmove(in_buffer, in_buffer + old_period, shunt_size * sizeof(float));
+  }
+
+  if (unit->write_flag) {
+    memcpy(out, out_buffer + readpos, inNumSamples * sizeof(float));
+    readpos += inNumSamples;
+  }
+
+  // printf("%d\n", readpos);
 
   unit->period = period;
   unit->tk = tk;
   unit->pos = pos;
-  unit->writepos = writepos;
+  unit->readpos = readpos;
   unit->period_count = period_count;
 }
 
@@ -695,13 +736,14 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 void Autotune_Dtor(Autotune *unit) {
   RTFree(unit->mWorld, unit->in_buffer);
   RTFree(unit->mWorld, unit->out_buffer);
-  RTFree(unit->mWorld, unit->resampler_in);
+  // RTFree(unit->mWorld, unit->resampler_in);
   RTFree(unit->mWorld, unit->tmp_buffer);
   RTFree(unit->mWorld, unit->fft_real);
   RTFree(unit->mWorld, unit->fft_complex);
-  RTFree(unit->mWorld, unit->freq_buffer);
+  // RTFree(unit->mWorld, unit->freq_buffer);
   RTFree(unit->mWorld, unit->period_buffer);
   RTFree(unit->mWorld, unit->marks_buffer);
+  RTFree(unit->mWorld, unit->correlation_buffer);
 }
 
 PluginLoad(Autotune) {
