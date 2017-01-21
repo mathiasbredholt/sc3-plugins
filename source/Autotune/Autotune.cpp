@@ -16,8 +16,8 @@
 #define TWOPI 6.28318530717952646f
 #define EXPECTED_PHASE_DIFF (TWOPI * HOP_SIZE/WIN_SIZE)
 #define CORRELATION_CONSTANT 0.8
-#define MINIMUM_FREQUENCY 70
-#define MAXIMUM_FREQUENCY 1024
+#define MINIMUM_FREQUENCY 60
+#define MAXIMUM_FREQUENCY 1000
 #define DEFAULT_PERIOD 441
 
 #define HANN_WINDOW 0
@@ -195,11 +195,10 @@ void calc_square_difference_function(float *autocorrelation,
   float sum_squared = autocorrelation[0];
   float sum_sq_left = sum_squared, sum_sq_right = sum_squared;
 
-  for (int i = 0; i < (N + 1) / 2; ++i) {
+  for (int i = 0; i < N / 2; ++i) {
     sum_sq_left  -= pow(in_buffer[i], 2);
     sum_sq_right -= pow(in_buffer[N - 1 - i], 2);
     autocorrelation[i] *= 2.0 / (sum_sq_left + sum_sq_right);
-
     debug[i] = autocorrelation[i];
   }
 
@@ -217,12 +216,12 @@ void do_peak_picking(float *sdf, float sample_rate, int N, int *period, float *c
   int x1, x2, x3;
   float y1, y2, y3;
 
-  while (n < 64 && i < (N + 1) / 2 - 1) {
+  while (n < 64 && i < N / 2 - 1) {
     // Find positively sloped zero-crossing
     if (sdf[i] < 0 && sdf[i + 1] >= 0) {
       local_max = i;
       // Find largest local maxima
-      while (n < 64 && i < (N + 1) / 2 - 1) {
+      while (n < 64 && i < N / 2 - 1) {
         // Current value is a local maxima within zero-crossings
         if (sdf[i] > sdf[local_max] && sdf[i] > sdf[i - 1] && sdf[i] > sdf[i + 1]) {
           local_max = i;
@@ -236,9 +235,10 @@ void do_peak_picking(float *sdf, float sample_rate, int N, int *period, float *c
         i++;
       }
       // No zero-crossing was found - save last peak
-      if (i == (N + 1) / 2 - 1) {
+      if (i == N / 2 - 1) {
         peaks[n] = local_max;
         n++;
+        break;
       }
     }
     i++;
