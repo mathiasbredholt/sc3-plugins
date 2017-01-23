@@ -699,8 +699,8 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
   if (pos - shunt_size >= period) {
     // Step 1.0 --- PITCH TRACKING
     memcpy(resampling_buffer, in_buffer, FFT_SIZE * sizeof(float));
-    // period = do_pitch_track2(resampling_buffer, fft_real, correlation_buffer, SAMPLERATE, WIN_SIZE);
-    period = 441;
+    period = do_pitch_track2(resampling_buffer, fft_real, correlation_buffer, SAMPLERATE, WIN_SIZE);
+    // period = 441;
 
 
     period_count++;
@@ -733,10 +733,9 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
     int min_t = INT_MAX;
     int odt, dt;
     int idx = 0;
-    int old_period;
-    int new_period;
+    int seg_len;
     int offset;
-    float new_pitchscale = 1.0, old_pitchscale = 1.0;
+    float pitchscale = 1.0;
 
     // Step 2.0 ---- DECIDE INDEX (0, 1, 2)
     for (int i = 0; i < period_count + 1; ++i) {
@@ -746,41 +745,33 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
       }
     }
 
-    // new_pitchscale =
-    // fmin(2.0, fmax(0.75, static_cast<float>(new_period) /
-    // closest_period(new_period, SAMPLERATE)));
+    seg_len = period_buffer[idx];
+    pitchscale =
+      fmin(2.0, fmax(0.75, static_cast<float>(seg_len) /
+                     closest_period(seg_len, SAMPLERATE)));
 
-    new_period = period_buffer[idx];
-    dt = static_cast<int>(static_cast<float>(new_period) / new_pitchscale);
 
+    dt = static_cast<int>(static_cast<float>(seg_len) / pitchscale);
+
+    // If ind is zero repeat the same section
     if (idx == 0) {
       tk += dt;
       offset = 0;
-      old_period = period_buffer[0];
     } else {
       tk += dt - marks_buffer[idx - 1];
-      old_period = period_buffer[idx - 1];
       offset = marks_buffer[idx - 1] * 2;
     }
 
-    // old_pitchscale =
-    // fmin(2.0, fmax(0.75, static_cast<float>(old_period) /
-    // closest_period(old_period, SAMPLERATE)));
-    odt = static_cast<int>(static_cast<float>(old_period) / new_pitchscale);
-
-
     // Step 3.0 --- WRITE TO OUTPUT BUFFER
     // Move output buffer with period
-    memmove(out_buffer, out_buffer + odt, (FFT_SIZE * 2 - odt) * sizeof(float));
-    readpos -= odt;
-    printf("%d \t %d\n", readpos, pos);
-
+    memmove(out_buffer, out_buffer + dt, (FFT_SIZE * 2 - dt) * sizeof(float));
+    readpos -= dt;
 
     clear_buffer(out_buffer + WRITEPOS, WIN_SIZE);
 
-    for (int i = 0; i < 2 * new_period; ++i) {
-      out_buffer[WRITEPOS - new_period + i] +=
-        tmp_buffer[offset + i] / new_pitchscale;
+    for (int i = 0; i < 2 * seg_len; ++i) {
+      out_buffer[WRITEPOS - seg_len + i] +=
+        tmp_buffer[offset + i] / pitchscale;
       // tmp_buffer[i];
     }
 
