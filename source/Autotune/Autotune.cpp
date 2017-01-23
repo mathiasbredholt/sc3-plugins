@@ -351,16 +351,17 @@ int do_pitch_track2(float *x, float *resampled, float *NSDF, float sample_rate, 
 //   *corr = top_y;
 // }
 
-float closest_period(int period, float sample_rate) {
+float closest_period(int period, float *scale_buf, int N, float sample_rate) {
   int k = 0;
   float diff = 1e9;
-  for (int i = 0; i < 15; ++i) {
-    if (abs(period - (sample_rate / freq_grid[i])) < diff) {
-      diff = abs(period - (sample_rate / freq_grid[i]));
+  for (int i = 0; i < N; ++i) {
+    float p = sample_rate / scale_buf[i];
+    if (abs(static_cast<float>(period) - p) < diff) {
+      diff = abs(static_cast<float>(period) - p);
       k = i;
     }
   }
-  return (sample_rate / freq_grid[k]);
+  return (sample_rate / scale_buf[k]);
 }
 
 // void pitch_tracking(float *in_buffer, float *fft_real, cfloat *fft_complex, int *period, float *corr, float *energy, float sample_rate, int N) {
@@ -691,7 +692,9 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
   float tk = unit->tk;
 
+
   GET_BUF
+
 
   memcpy(in_buffer + pos, in, inNumSamples * sizeof(float));
   pos += inNumSamples;
@@ -722,8 +725,6 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
                  HANN_WINDOW,
                  2 * period_buffer[period_count]);
 
-    memcpy(bufData, tmp_buffer, FFT_SIZE * 2 * sizeof(float));
-
     // Step 5.0 -- MOVE INPUT BUFFER
     pos -= period;
     memmove(in_buffer, in_buffer + period, (FFT_SIZE - period) * sizeof(float));
@@ -747,8 +748,8 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
 
     seg_len = period_buffer[idx];
     pitchscale =
-      fmin(2.0, fmax(0.75, static_cast<float>(seg_len) /
-                     closest_period(seg_len, SAMPLERATE)));
+      fmin(2.0, fmax(0.5, static_cast<float>(seg_len) /
+                     closest_period(seg_len, bufData, bufFrames, SAMPLERATE)));
 
 
     dt = static_cast<int>(static_cast<float>(seg_len) / pitchscale);
