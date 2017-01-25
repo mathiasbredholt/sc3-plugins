@@ -1,3 +1,4 @@
+// PitchCorrection UGen
 // Copyright 2017 M. Bredholt and M. Kirkegaard
 // requires libsamplerate
 #include "SC_PlugIn.h"
@@ -145,7 +146,7 @@ float do_moving_average(float in, float *in_buffer, int N) {
   return out;
 }
 
-struct Autotune : public Unit {
+struct PitchCorrection : public Unit {
   float *in_buffer, *out_buffer, *tmp_buffer, *segment_buffer, *correlation_buffer, *resampling_buffer;
   float *freq_buffer;
   SndBuf *m_buf;
@@ -160,12 +161,12 @@ struct Autotune : public Unit {
 };
 
 extern "C" {
-  void Autotune_next(Autotune *unit, int inNumSamples);
-  void Autotune_Ctor(Autotune *unit);
-  void Autotune_Dtor(Autotune *unit);
+  void PitchCorrection_next(PitchCorrection *unit, int inNumSamples);
+  void PitchCorrection_Ctor(PitchCorrection *unit);
+  void PitchCorrection_Dtor(PitchCorrection *unit);
 }
 
-void Autotune_Ctor(Autotune *unit) {
+void PitchCorrection_Ctor(PitchCorrection *unit) {
   unit->in_buffer = alloc_buffer(FFT_SIZE, unit);
   unit->out_buffer = alloc_buffer(FFT_SIZE * 2, unit);
   unit->tmp_buffer = alloc_buffer(FFT_SIZE, unit);
@@ -205,11 +206,11 @@ void Autotune_Ctor(Autotune *unit) {
 
   unit->read_flag = false;
 
-  SETCALC(Autotune_next);
-  Autotune_next(unit, 1);
+  SETCALC(PitchCorrection_next);
+  PitchCorrection_next(unit, 1);
 }
 
-void Autotune_next(Autotune *unit, int inNumSamples) {
+void PitchCorrection_next(PitchCorrection *unit, int inNumSamples) {
   float *in = IN(1);
   float *out = OUT(0);
   int pos = unit->pos;
@@ -335,7 +336,7 @@ void Autotune_next(Autotune *unit, int inNumSamples) {
   unit->segments_ready = segments_ready;
 }
 
-void Autotune_Dtor(Autotune * unit) {
+void PitchCorrection_Dtor(PitchCorrection * unit) {
   RTFree(unit->mWorld, unit->in_buffer);
   RTFree(unit->mWorld, unit->out_buffer);
   RTFree(unit->mWorld, unit->resampling_buffer);
@@ -347,7 +348,7 @@ void Autotune_Dtor(Autotune * unit) {
   RTFree(unit->mWorld, unit->pitch_marks);
 }
 
-PluginLoad(Autotune) {
+PluginLoad(PitchCorrection) {
   ft = inTable;
-  DefineDtorUnit(Autotune);
+  DefineDtorUnit(PitchCorrection);
 }
