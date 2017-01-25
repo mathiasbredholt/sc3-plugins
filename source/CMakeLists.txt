@@ -112,7 +112,6 @@ set(PLUGIN_DIRS
 
 # plugins with extra lib
 set(PLUGIN_DIRS_EXTRA
-    Autotune
     AuditoryModeling
     BetablockerUGens
     DEINDUGens
@@ -120,6 +119,7 @@ set(PLUGIN_DIRS_EXTRA
     MembraneUGens
     NCAnalysisUGens
     OteyPianoUGens
+    PitchCorrection
     PitchDetection
     StkUGens
     TJUGens
@@ -185,33 +185,6 @@ install(DIRECTORY local DESTINATION "${INSTALL_DESTINATION_DISTRO}"
 #---------------------
 # plugins with extras:
 #---------------------
-
-# Autotune
-
-file(GLOB AutotuneSources Autotune/*cpp)
-
-find_package(FFTW3f)
-if (!FFTW3F_FOUND)
-    message(SEND_ERROR "Cannot find libfftw3f")
-endif()
-
-find_package(libsamplerate)
-if (!LIBSAMPLERATE_FOUND)
-    message(SEND_ERROR "Cannot find libsamplerate")
-endif()
-
-set (AutotuneLibs "${FFTW3F_LIBRARY};${LIBSAMPLERATE_LIBRARIES}")
-
-
-BUILD_PLUGIN(Autotune "${AutotuneSources}"
-             "${AutotuneLibs}" "Autotune")
-
-include_directories(${FFTW3F_INCLUDE_DIR})
-include_directories(${LIBSAMPLERATE_INCLUDE_DIR})
-set_property(TARGET Autotune APPEND PROPERTY COMPILE_DEFINITIONS SC_FFT_FFTW)
-if (SUPERNOVA)
-    set_property(TARGET Autotune_supernova APPEND PROPERTY COMPILE_DEFINITIONS SC_FFT_FFTW)
-endif()
 
 # AuditoryModeling
 file(GLOB AuditoryModelingSources AuditoryModeling/*cpp)
@@ -293,6 +266,22 @@ else()
         set_property(TARGET PitchDetection_supernova APPEND PROPERTY COMPILE_DEFINITIONS SC_FFT_FFTW)
     endif()
 endif()
+
+# PitchCorrection
+
+file(GLOB PitchCorrectionSources PitchCorrection/*cpp)
+
+find_package(libsamplerate)
+if (!LIBSAMPLERATE_FOUND)
+    message(SEND_ERROR "Cannot find libsamplerate")
+endif()
+
+set (PitchCorrectionLibs "${LIBSAMPLERATE_LIBRARY}")
+
+BUILD_PLUGIN(PitchCorrection "${PitchCorrectionSources}"
+             "${PitchCorrectionLibs}" "PitchCorrection")
+
+include_directories(${LIBSAMPLERATE_INCLUDE_DIR})
 
 # StkUGens
 if(SYSTEM_STK)
