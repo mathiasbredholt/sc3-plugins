@@ -3,9 +3,12 @@
 // requires libsamplerate
 #include "SC_PlugIn.h"
 #include <samplerate.h>
+#include <fftw3.h>   
 #include <climits>
+#include <complex>
 
 #define FFT_SIZE 4096
+#define FFT_COMPLEX_SIZE static_cast<int>(FFT_SIZE/2 + 1)    
 #define WIN_SIZE 2048
 #define WRITEPOS 6144
 #define CORRELATION_CONSTANT 0.9
@@ -18,10 +21,16 @@
 #define HANN_WINDOW 0
 #define SINE_WINDOW 1
 
+typedef std::complex<float> cfloat;
+
 static InterfaceTable *ft;
 
 float* alloc_buffer(int N, Unit *unit) {
   return static_cast<float*>(RTAlloc(unit->mWorld, N * sizeof(float)));
+}
+
+cfloat* alloc_complex_buffer(int N, Unit *unit) {    
+  return static_cast<cfloat*>(RTAlloc(unit->mWorld, N * sizeof(cfloat)));   
 }
 
 int* alloc_int_buffer(int N, Unit *unit) {
@@ -30,6 +39,48 @@ int* alloc_int_buffer(int N, Unit *unit) {
 
 void clear_buffer(float *buffer, int N) {
   memset(buffer, 0, N * sizeof(float));
+}
+
+void clear_complex_buffer(cfloat *buffer, int N) {   
+  memset(buffer, 0, N * sizeof(cfloat));    
+}
+
+void do_fft(cfloat *fft_complex, float *fft_real, int N) {   
+  fftwf_plan fft;   
+  fft = fftwf_plan_dft_r2c_1d(    
+          N,    
+          fft_real,   
+          reinterpret_cast<fftwf_complex*>(fft_complex),    
+          FFTW_ESTIMATE);   
+  fftwf_execute(fft);   
+  fftwf_destroy_plan(fft);    
+}
+
+void do_ifft(float *fft_real, cfloat *fft_complex, int N) {    
+  fftwf_plan ifft;
+  ifft = fftwf_plan_dft_c2r_1d(   
+           N,   
+           reinterpret_cast<fftwf_complex*>(fft_complex),   
+           fft_real,    
+           FFTW_ESTIMATE);    
+  fftwf_execute(ifft);    
+  fftwf_destroy_plan(ifft);   
+}
+
+void calc_power_spectral_density(cfloat *spectrum, int N) {   
+   for (int i = 0; i < N; ++i) {    
+     spectrum[i] *= std::conj(spectrum[i]);   
+   }    
+}
+
+void calc_square_difference_function(float *ACF,    
+                                     float *x, int N) {
+  float x_left = ACF[0], x_right = ACF[0];
+  for (int i = 0; i < N / 2; ++i) {    
+    x_left  -= pow(x[i], 2);    
+    x_right -= pow(x[N - 1 - i], 2);    
+    ACF[i] *= 2.0 / (x_left + x_right);    
+  } 
 }
 
 void do_windowing(float *in, int wintype, int N, float scale = 1.0) {
@@ -72,29 +123,36 @@ float calc_signal_energy(float *in_buffer, int N) {
   return energy;
 }
 
-int pitch_track(float *x, float *resampled, float *ACF, float sample_rate, int N) {
+int pitch_track(float *x, float *resampled, float *ACF, cfloat *fft_complex, float sample_rate, int N) {
   int lagmin = static_cast<int>(sample_rate / (DOWNSAMPLING * MAXIMUM_FREQUENCY));
   int lagmax = static_cast<int>(sample_rate / (DOWNSAMPLING * MINIMUM_FREQUENCY));
   int idx_max = 0;
-  int M = lagmax - lagmin + 1;
+  // int M = lagmax - lagmin + 1;
+  int M = N / 2;
   float ACF_max = 0.0;
   int P;
 
   memset(ACF, 0, N * sizeof(float));
+  memcpy(resampled, x, WIN_SIZE * sizeof(float));
 
-  do_resample(resampled, x, 1.0 / DOWNSAMPLING, N, N / DOWNSAMPLING, SRC_LINEAR);
-  x = resampled;
+  // do_resample(resampled, x, 1.0 / DOWNSAMPLING, N, N / DOWNSAMPLING, SRC_LINEAR);
+  // x = resampled;
 
-  for (int i = lagmin; i < lagmax; ++i) {
-    float x1_sq = 0.0, x2_sq = 0.0, acf = 0.0;
-    for (int j = 0; j < M; ++j) {
-      float x1 = x[j], x2 = x[i + j];
-      x1_sq += x1 * x1;
-      x2_sq += x2 * x2;
-      acf += x1 * x2;
-    }
-    ACF[i - lagmin] = acf / sqrt(x1_sq * x2_sq);
-  }
+  do_fft(fft_complex, resampled, N);
+  calc_power_spectral_density(fft_complex, FFT_COMPLEX_SIZE);
+  do_ifft(ACF, fft_complex, N);
+  calc_square_difference_function(ACF, resampled, N);
+
+  // for (int i = lagmin; i < lagmax; ++i) {
+  //   float x1_sq = 0.0, x2_sq = 0.0, acf = 0.0;
+  //   for (int j = 0; j < M; ++j) {
+  //     float x1 = x[j], x2 = x[i + j];
+  //     x1_sq += x1 * x1;
+  //     x2_sq += x2 * x2;
+  //     acf += x1 * x2;
+  //   }
+  //   ACF[i - lagmin] = acf / sqrt(x1_sq * x2_sq);
+  // }
 
   // Find maximum
   for (int i = 0; i < M; ++i) {
@@ -114,9 +172,11 @@ int pitch_track(float *x, float *resampled, float *ACF, float sample_rate, int N
         while (ACF[i + 1] > ACF[i]) {
           i++;
         }
-        return quad_fit_peak((i + lagmin) * DOWNSAMPLING, ACF[i - 1], ACF[i], ACF[i + 1]);
+        // return quad_fit_peak((i + lagmin) * DOWNSAMPLING, ACF[i - 1], ACF[i], ACF[i + 1]);
+        return quad_fit_peak(i, ACF[i - 1], ACF[i], ACF[i + 1]);
       } else {
-        P = quad_fit_peak((idx_max + lagmin) * DOWNSAMPLING, ACF[idx_max - 1], ACF[idx_max], ACF[idx_max + 1]);
+        // P = quad_fit_peak((idx_max + lagmin) * DOWNSAMPLING, ACF[idx_max - 1], ACF[idx_max], ACF[idx_max + 1]);
+        P = quad_fit_peak(i, ACF[idx_max - 1], ACF[idx_max], ACF[idx_max + 1]);
       }
     }
   }
@@ -148,6 +208,8 @@ float do_moving_average(float in, float *in_buffer, int N) {
 
 struct PitchCorrection : public Unit {
   float *in_buffer, *out_buffer, *tmp_buffer, *segment_buffer, *correlation_buffer, *resampling_buffer;
+  float *fft_real;
+  cfloat *fft_complex;
   float *freq_buffer;
   SndBuf *m_buf;
   float m_fbufnum;
@@ -168,6 +230,8 @@ extern "C" {
 
 void PitchCorrection_Ctor(PitchCorrection *unit) {
   unit->in_buffer = alloc_buffer(FFT_SIZE, unit);
+  unit->fft_real = alloc_buffer(FFT_SIZE, unit);
+  unit->fft_complex = alloc_complex_buffer(FFT_COMPLEX_SIZE, unit);
   unit->out_buffer = alloc_buffer(FFT_SIZE * 2, unit);
   unit->tmp_buffer = alloc_buffer(FFT_SIZE, unit);
   unit->segment_buffer = alloc_buffer(FFT_SIZE * 2, unit);
@@ -175,6 +239,8 @@ void PitchCorrection_Ctor(PitchCorrection *unit) {
   unit->resampling_buffer = alloc_buffer(FFT_SIZE, unit);
 
   clear_buffer(unit->in_buffer, FFT_SIZE);
+  clear_buffer(unit->fft_real, FFT_SIZE);
+  clear_complex_buffer(unit->fft_complex, FFT_COMPLEX_SIZE);
   clear_buffer(unit->out_buffer, FFT_SIZE * 2);
   clear_buffer(unit->tmp_buffer, FFT_SIZE);
   clear_buffer(unit->segment_buffer, FFT_SIZE * 2);
@@ -218,6 +284,8 @@ void PitchCorrection_next(PitchCorrection *unit, int inNumSamples) {
 
   float *in_buffer = unit->in_buffer;
   float *out_buffer = unit->out_buffer;
+  float *fft_real = unit->fft_real;
+  float *fft_complex = unit->fft_complex;
   float *segment_buffer = unit->segment_buffer;
   float *correlation_buffer = unit->correlation_buffer;
   float *resampling_buffer = unit->resampling_buffer;
@@ -243,7 +311,7 @@ void PitchCorrection_next(PitchCorrection *unit, int inNumSamples) {
     int offset;
     // Step 1.0 --- PITCH TRACKING
     memcpy(resampling_buffer, in_buffer, FFT_SIZE * sizeof(float));
-    P = pitch_track(resampling_buffer, tmp_buffer, correlation_buffer, SAMPLERATE, WIN_SIZE);
+    P = pitch_track(resampling_buffer, tmp_buffer, correlation_buffer, fft_complex, SAMPLERATE, WIN_SIZE);
 
     segments_ready++;
     segment_lengths[segments_ready] = P;
@@ -338,6 +406,8 @@ void PitchCorrection_next(PitchCorrection *unit, int inNumSamples) {
 
 void PitchCorrection_Dtor(PitchCorrection * unit) {
   RTFree(unit->mWorld, unit->in_buffer);
+  RTFree(unit->mWorld, unit->fft_real);
+  RTFree(unit->mWorld, unit->fft_complex);
   RTFree(unit->mWorld, unit->out_buffer);
   RTFree(unit->mWorld, unit->resampling_buffer);
   RTFree(unit->mWorld, unit->correlation_buffer);
