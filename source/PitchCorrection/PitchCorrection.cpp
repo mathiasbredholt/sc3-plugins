@@ -173,7 +173,11 @@ int pitch_track(float *x, float *resampled, float *ACF, cfloat *fft_complex, flo
           i++;
         }
         // return quad_fit_peak((i + lagmin) * DOWNSAMPLING, ACF[i - 1], ACF[i], ACF[i + 1]);
-        return quad_fit_peak(i, ACF[i - 1], ACF[i], ACF[i + 1]);
+        if (sample_rate/i > MINIMUM_FREQUENCY && sample_rate/i < MAXIMUM_FREQUENCY) {
+          return quad_fit_peak(i, ACF[i - 1], ACF[i], ACF[i + 1]);
+        } else {
+          return DEFAULT_PERIOD;
+        }
       } else {
         // P = quad_fit_peak((idx_max + lagmin) * DOWNSAMPLING, ACF[idx_max - 1], ACF[idx_max], ACF[idx_max + 1]);
         P = quad_fit_peak(i, ACF[idx_max - 1], ACF[idx_max], ACF[idx_max + 1]);
