@@ -276,12 +276,23 @@ if (!LIBSAMPLERATE_FOUND)
     message(SEND_ERROR "Cannot find libsamplerate")
 endif()
 
-set (PitchCorrectionLibs "${LIBSAMPLERATE_LIBRARY}")
+find_package(FFTW3f)
+if (!FFTW3F_FOUND)
+    message(SEND_ERROR "Cannot find libfftw3f")
+endif()
+
+set (PitchCorrectionLibs "${FFTW3F_LIBRARY};${LIBSAMPLERATE_LIBRARY}")
 
 BUILD_PLUGIN(PitchCorrection "${PitchCorrectionSources}"
              "${PitchCorrectionLibs}" "PitchCorrection")
 
 include_directories(${LIBSAMPLERATE_INCLUDE_DIR})
+include_directories(${FFTW3F_INCLUDE_DIR})
+
+set_property(TARGET PitchCorrection APPEND PROPERTY COMPILE_DEFINITIONS SC_FFT_FFTW)
+if (SUPERNOVA)
+    set_property(TARGET PitchCorrection_supernova APPEND PROPERTY COMPILE_DEFINITIONS SC_FFT_FFTW)
+endif()
 
 # StkUGens
 if(SYSTEM_STK)
