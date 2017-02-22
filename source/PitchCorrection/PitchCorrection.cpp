@@ -3,14 +3,13 @@
 // requires libsamplerate
 #include "SC_PlugIn.h"
 #include <samplerate.h>
-#include <fftw3.h>
 #include <climits>
 #include <complex>
 
-#define FFT_SIZE 2048
+#define FFT_SIZE 4096
 #define FFT_COMPLEX_SIZE static_cast<int>(FFT_SIZE/2 + 1)
-#define WIN_SIZE 1024
-#define WRITEPOS 1536
+#define WIN_SIZE 2048
+#define WRITEPOS 6144
 #define CORRELATION_CONSTANT 0.9
 #define MINIMUM_FREQUENCY 70
 #define MAXIMUM_FREQUENCY 680
@@ -21,16 +20,10 @@
 #define HANN_WINDOW 0
 #define SINE_WINDOW 1
 
-typedef std::complex<float> cfloat;
-
 static InterfaceTable *ft;
 
 float* alloc_buffer(int N, Unit *unit) {
     return static_cast<float*>(RTAlloc(unit->mWorld, N * sizeof(float)));
-}
-
-cfloat* alloc_complex_buffer(int N, Unit *unit) {
-    return static_cast<cfloat*>(RTAlloc(unit->mWorld, N * sizeof(cfloat)));
 }
 
 int* alloc_int_buffer(int N, Unit *unit) {
@@ -39,38 +32,6 @@ int* alloc_int_buffer(int N, Unit *unit) {
 
 void clear_buffer(float *buffer, int N) {
     memset(buffer, 0, N * sizeof(float));
-}
-
-void clear_complex_buffer(cfloat *buffer, int N) {
-    memset(buffer, 0, N * sizeof(cfloat));
-}
-
-void do_fft(cfloat *fft_complex, float *fft_real, int N) {
-    fftwf_plan fft;
-    fft = fftwf_plan_dft_r2c_1d(
-              N,
-              fft_real,
-              reinterpret_cast<fftwf_complex*>(fft_complex),
-              FFTW_ESTIMATE);
-    fftwf_execute(fft);
-    fftwf_destroy_plan(fft);
-}
-
-void do_ifft(float *fft_real, cfloat *fft_complex, int N) {
-    fftwf_plan ifft;
-    ifft = fftwf_plan_dft_c2r_1d(
-               N,
-               reinterpret_cast<fftwf_complex*>(fft_complex),
-               fft_real,
-               FFTW_ESTIMATE);
-    fftwf_execute(ifft);
-    fftwf_destroy_plan(ifft);
-}
-
-void calc_power_spectral_density(cfloat *spectrum, int N) {
-    for (int i = 0; i < N; ++i) {
-        spectrum[i] *= std::conj(spectrum[i]);
-    }
 }
 
 void calc_square_difference_function(float *ACF,
@@ -123,7 +84,7 @@ float calc_signal_energy(float *in_buffer, int N) {
     return energy;
 }
 
-int pitch_track(float *x, float *resampled, float *ACF, cfloat *fft_complex, float sample_rate, int N) {
+int pitch_track(float *x, float *resampled, float *ACF, float sample_rate, int N) {
     int lagmin = static_cast<int>(sample_rate / (DOWNSAMPLING * MAXIMUM_FREQUENCY));
     int lagmax = static_cast<int>(sample_rate / (DOWNSAMPLING * MINIMUM_FREQUENCY));
     int idx_max = 0;
@@ -131,8 +92,7 @@ int pitch_track(float *x, float *resampled, float *ACF, cfloat *fft_complex, flo
     // int M = N / 2;
     float ACF_max = 0.0;
     int P;
-    int start_idx;
-    int energy;
+    float energy;
     float mean = 0.0;
 
     memset(ACF, 0, N * sizeof(float));
@@ -168,13 +128,8 @@ int pitch_track(float *x, float *resampled, float *ACF, cfloat *fft_complex, flo
         ACF[i - lagmin] = acf / sqrt(x1_sq * x2_sq);
     }
 
-    // // Find first positively sloped zero crossing
-    // for (start_idx = 0; start_idx < M; ++start_idx) {
-    //     if (ACF[start_idx] < 0 && ACF[start_idx + 1] >= 0) break;
-    // }
-
     // Find maximum
-    for (int i = start_idx; i < M; ++i) {
+    for (int i = 0; i < M; ++i) {
         if (ACF[i] > ACF_max) {
             ACF_max = ACF[i];
             idx_max = i;
@@ -186,7 +141,7 @@ int pitch_track(float *x, float *resampled, float *ACF, cfloat *fft_complex, flo
         return DEFAULT_PERIOD;
         // Search for peak
     } else {
-        for (int i = start_idx; i < M; ++i) {
+        for (int i = 0; i < M; ++i) {
             if (ACF[i + 1] > ACF_max * CORRELATION_CONSTANT) {
                 while (ACF[i + 1] > ACF[i]) {
                     i++;
@@ -231,8 +186,6 @@ float do_moving_average(float in, float *in_buffer, int N) {
 
 struct PitchCorrection : public Unit {
     float *in_buffer, *out_buffer, *tmp_buffer, *segment_buffer, *correlation_buffer, *resampling_buffer;
-    float *fft_real;
-    cfloat *fft_complex;
     float *freq_buffer;
     SndBuf *m_buf;
     float m_fbufnum;
@@ -253,8 +206,6 @@ extern "C" {
 
 void PitchCorrection_Ctor(PitchCorrection *unit) {
     unit->in_buffer = alloc_buffer(FFT_SIZE, unit);
-    unit->fft_real = alloc_buffer(FFT_SIZE, unit);
-    unit->fft_complex = alloc_complex_buffer(FFT_COMPLEX_SIZE, unit);
     unit->out_buffer = alloc_buffer(FFT_SIZE * 2, unit);
     unit->tmp_buffer = alloc_buffer(FFT_SIZE, unit);
     unit->segment_buffer = alloc_buffer(FFT_SIZE * 2, unit);
@@ -262,8 +213,6 @@ void PitchCorrection_Ctor(PitchCorrection *unit) {
     unit->resampling_buffer = alloc_buffer(FFT_SIZE, unit);
 
     clear_buffer(unit->in_buffer, FFT_SIZE);
-    clear_buffer(unit->fft_real, FFT_SIZE);
-    clear_complex_buffer(unit->fft_complex, FFT_COMPLEX_SIZE);
     clear_buffer(unit->out_buffer, FFT_SIZE * 2);
     clear_buffer(unit->tmp_buffer, FFT_SIZE);
     clear_buffer(unit->segment_buffer, FFT_SIZE * 2);
@@ -307,8 +256,6 @@ void PitchCorrection_next(PitchCorrection *unit, int inNumSamples) {
 
     float *in_buffer = unit->in_buffer;
     float *out_buffer = unit->out_buffer;
-    float *fft_real = unit->fft_real;
-    cfloat *fft_complex = unit->fft_complex;
     float *segment_buffer = unit->segment_buffer;
     float *correlation_buffer = unit->correlation_buffer;
     float *resampling_buffer = unit->resampling_buffer;
@@ -330,12 +277,13 @@ void PitchCorrection_next(PitchCorrection *unit, int inNumSamples) {
     memcpy(in_buffer + pos, in, inNumSamples * sizeof(float));
     pos += inNumSamples;
 
+    // printf("%d\n", pos);
+
     if (pos - shunt_size >= P) {
         int offset;
         // Step 1.0 --- PITCH TRACKING
         memcpy(resampling_buffer, in_buffer, FFT_SIZE * sizeof(float));
-        P = pitch_track(resampling_buffer, tmp_buffer, correlation_buffer, fft_complex, SAMPLERATE, WIN_SIZE);
-        printf("%d\n", P);
+        P = pitch_track(resampling_buffer, tmp_buffer, correlation_buffer, SAMPLERATE, WIN_SIZE);
 
         segments_ready++;
         segment_lengths[segments_ready] = P;
@@ -430,8 +378,6 @@ void PitchCorrection_next(PitchCorrection *unit, int inNumSamples) {
 
 void PitchCorrection_Dtor(PitchCorrection * unit) {
     RTFree(unit->mWorld, unit->in_buffer);
-    RTFree(unit->mWorld, unit->fft_real);
-    RTFree(unit->mWorld, unit->fft_complex);
     RTFree(unit->mWorld, unit->out_buffer);
     RTFree(unit->mWorld, unit->resampling_buffer);
     RTFree(unit->mWorld, unit->correlation_buffer);
